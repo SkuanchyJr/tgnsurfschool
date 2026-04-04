@@ -1,14 +1,7 @@
 "use server";
 
-import { createClient } from "@/utils/supabase/server";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-
-function getAdmin() {
-    return createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-}
+import pool from "@/lib/db";
+import { getUser } from "@/lib/session";
 
 export type Notification = {
     id: string;
@@ -21,75 +14,46 @@ export type Notification = {
     created_at: string;
 };
 
-/**
- * Get all notifications for the currently authenticated user
- */
 export async function getMyNotifications(): Promise<Notification[]> {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return [];
 
-    const admin = getAdmin();
-    const { data } = await admin
-        .from("notifications")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-    return (data || []) as Notification[];
+    const result = await pool.query<Notification>(
+        `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [user.id]
+    );
+    return result.rows;
 }
 
-/**
- * Get unread notification count for the current user
- */
 export async function getUnreadCount(): Promise<number> {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return 0;
 
-    const admin = getAdmin();
-    const { count } = await admin
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("read", false);
-
-    return count || 0;
+    const result = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND read = false`,
+        [user.id]
+    );
+    return parseInt(result.rows[0]?.count ?? "0", 10);
 }
 
-/**
- * Mark a single notification as read
- */
 export async function markNotificationRead(notificationId: string): Promise<{ success: boolean }> {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return { success: false };
 
-    const admin = getAdmin();
-    const { error } = await admin
-        .from("notifications")
-        .update({ read: true })
-        .eq("id", notificationId)
-        .eq("user_id", user.id);
-
-    return { success: !error };
+    await pool.query(
+        `UPDATE notifications SET read = true WHERE id = $1 AND user_id = $2`,
+        [notificationId, user.id]
+    );
+    return { success: true };
 }
 
-/**
- * Mark all notifications as read for the current user
- */
 export async function markAllNotificationsRead(): Promise<{ success: boolean }> {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return { success: false };
 
-    const admin = getAdmin();
-    const { error } = await admin
-        .from("notifications")
-        .update({ read: true })
-        .eq("user_id", user.id)
-        .eq("read", false);
-
-    return { success: !error };
+    await pool.query(
+        `UPDATE notifications SET read = true WHERE user_id = $1 AND read = false`,
+        [user.id]
+    );
+    return { success: true };
 }

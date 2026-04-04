@@ -1,49 +1,55 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
 import ClassBrowserClient from "./ClassBrowserClient";
 import { Waves } from "lucide-react";
 
 export const metadata = { title: "Reservar Clase | TGN Surf" };
 
 export default async function StudentClassesPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const today = new Date().toISOString().split("T")[0];
 
-    // Fetch available classes (scheduled, from today onward)
-    const { data: classes } = await supabaseAdmin
-        .from("classes")
-        .select(`
-            id, date, time, duration_minutes, level, max_capacity, status, location, notes,
-            service:service_id ( title, type ),
-            class_instructors (
-                id, instructor_id, status,
-                instructor:instructor_id ( id, name, email )
-            )
-        `)
-        .eq("status", "SCHEDULED")
-        .gte("date", today)
-        .order("date", { ascending: true })
-        .order("time", { ascending: true });
+    // Fetch available classes with instructor info and pax counts
+    const classesResult = await pool.query(
+        `SELECT c.id, c.date, c.time, c.duration_minutes, c.level, c.max_capacity, c.status, c.location, c.notes,
+                s.title as service_title, s.type as service_type,
+                COALESCE((
+                    SELECT SUM(b.pax) FROM bookings b WHERE b.class_id = c.id AND b.status != 'CANCELLED'
+                ), 0) as booked_pax
+         FROM classes c
+         LEFT JOIN services s ON s.id = c.service_id
+         WHERE c.status = 'SCHEDULED' AND c.date >= $1
+         ORDER BY c.date ASC, c.time ASC`,
+        [today]
+    );
 
-    // Compute pax per class
-    const classIds = (classes || []).map((c: any) => c.id);
-    const { data: bookings } = classIds.length > 0
-        ? await supabaseAdmin.from("bookings").select("class_id, pax").in("class_id", classIds).neq("status", "CANCELLED")
-        : { data: [] };
+    // Fetch instructors for each class
+    const instructorResult = await pool.query(
+        `SELECT ci.class_id, ci.id, ci.instructor_id, ci.status, u.name, u.email
+         FROM class_instructors ci
+         JOIN users u ON u.id = ci.instructor_id
+         WHERE ci.class_id = ANY($1::uuid[])`,
+        [classesResult.rows.map((c: any) => c.id)]
+    );
 
-    const paxByClass: Record<string, number> = {};
-    for (const b of (bookings || [])) {
-        if (b.class_id) paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + b.pax;
+    const instructorsByClass: Record<string, any[]> = {};
+    for (const row of instructorResult.rows) {
+        if (!instructorsByClass[row.class_id]) instructorsByClass[row.class_id] = [];
+        instructorsByClass[row.class_id].push({
+            id: row.id, instructor_id: row.instructor_id, status: row.status,
+            instructor: { id: row.instructor_id, name: row.name, email: row.email },
+        });
     }
 
-    const enrichedClasses = (classes || []).map((c: any) => ({
+    const enrichedClasses = classesResult.rows.map((c: any) => ({
         ...c,
-        total_pax: paxByClass[c.id] || 0,
-        remaining: c.max_capacity - (paxByClass[c.id] || 0),
+        service: { title: c.service_title, type: c.service_type },
+        class_instructors: instructorsByClass[c.id] || [],
+        total_pax: parseInt(c.booked_pax, 10),
+        remaining: c.max_capacity - parseInt(c.booked_pax, 10),
     }));
 
     return (

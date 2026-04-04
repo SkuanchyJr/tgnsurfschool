@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import pool from "@/lib/db";
 import { notifyPassPurchase, notifyBookingConfirmation, notifyNewBookingToAdmin } from "@/lib/notifications";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
@@ -8,13 +8,6 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
 });
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
-
-function getAdminClient() {
-    return createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-}
 
 export async function POST(req: Request) {
     try {
@@ -27,7 +20,6 @@ export async function POST(req: Request) {
         }
 
         let event: Stripe.Event;
-
         try {
             event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
         } catch (err: any) {
@@ -44,79 +36,54 @@ export async function POST(req: Request) {
                 return NextResponse.json({ received: true });
             }
 
-            const admin = getAdminClient();
-
-            // CASE 1: PASS PURCHASE
             if (metadata.type === 'PASS_PURCHASE' && metadata.userId && metadata.passType && metadata.classCount) {
                 const classCount = parseInt(metadata.classCount, 10);
                 const expiryDate = new Date();
-                expiryDate.setMonth(expiryDate.getMonth() + 6); // 6 months validity
+                expiryDate.setMonth(expiryDate.getMonth() + 6);
 
-                const { error: passError } = await admin
-                    .from("user_passes")
-                    .insert({
-                        user_id: metadata.userId,
-                        type: metadata.passType,
-                        total_classes: classCount,
-                        remaining_classes: classCount,
-                        status: 'ACTIVE',
-                        expiry_date: expiryDate.toISOString(),
-                        stripe_session_id: session.id,
-                    });
-
-                if (passError) {
-                    console.error("Error creating user pass in webhook:", passError);
-                } else {
-                    console.log(`Pass created successfully for user ${metadata.userId} (Type: ${metadata.passType})`);
-                    // Notify student + admins about pass purchase (non-blocking)
+                try {
+                    await pool.query(
+                        `INSERT INTO user_passes (user_id, type, total_classes, remaining_classes, status, expiry_date, stripe_session_id)
+                         VALUES ($1, $2, $3, $3, 'ACTIVE', $4, $5)`,
+                        [metadata.userId, metadata.passType, classCount, expiryDate.toISOString(), session.id]
+                    );
+                    console.log(`Pass created for user ${metadata.userId}`);
                     notifyPassPurchase(metadata.userId, metadata.passType, classCount).catch(console.error);
+                } catch (e) {
+                    console.error("Error creating user pass:", e);
                 }
-            } 
-            // CASE 2: SINGLE CLASS RESERVATION (DEPOSIT)
-            else if (metadata.classId && metadata.userId && metadata.pax) {
-                // 1. Check if we already created the booking (Idempotency)
-                const { data: existingUserBooking } = await admin
-                    .from("bookings")
-                    .select("id")
-                    .eq("class_id", metadata.classId)
-                    .eq("user_id", metadata.userId)
-                    .neq("status", "CANCELLED")
-                    .maybeSingle();
+            } else if (metadata.classId && metadata.userId && metadata.pax) {
+                const existingResult = await pool.query(
+                    `SELECT id FROM bookings WHERE class_id = $1 AND user_id = $2 AND status != 'CANCELLED'`,
+                    [metadata.classId, metadata.userId]
+                );
 
-                if (!existingUserBooking) {
-                    // 2. Fetch the class to get service_id, date, time
-                    const { data: cls } = await admin
-                        .from("classes")
-                        .select("service_id, date, time")
-                        .eq("id", metadata.classId)
-                        .single();
+                if (existingResult.rows.length === 0) {
+                    const clsResult = await pool.query(
+                        `SELECT service_id, date, time FROM classes WHERE id = $1`,
+                        [metadata.classId]
+                    );
 
-                    if (cls) {
-                        // 3. Insert booking
-                        const { error: insertError } = await admin
-                            .from("bookings")
-                            .insert({
-                                user_id: metadata.userId,
-                                class_id: metadata.classId,
-                                service_id: cls.service_id,
-                                date: cls.date,
-                                time: cls.time,
-                                pax: parseInt(metadata.pax, 10),
-                                status: "PENDING", // Confirmed deposit
-                            });
+                    if (clsResult.rows.length > 0) {
+                        const cls = clsResult.rows[0];
+                        const pax = parseInt(metadata.pax, 10);
 
-                        if (insertError) {
-                            console.error("Error inserting booking from webhook:", insertError);
-                        } else {
-                            console.log("Booking created successfully from webhook for class:", metadata.classId);
-                            // Fetch service name and user info for notifications
+                        try {
+                            await pool.query(
+                                `INSERT INTO bookings (user_id, class_id, service_id, date, time, pax, status)
+                                 VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')`,
+                                [metadata.userId, metadata.classId, cls.service_id, cls.date, cls.time, pax]
+                            );
+                            console.log("Booking created from webhook for class:", metadata.classId);
+
                             let serviceName = "Clase de Surf";
                             if (cls.service_id) {
-                                const { data: svc } = await admin.from('services').select('title').eq('id', cls.service_id).single();
-                                if (svc) serviceName = svc.title;
+                                const svcResult = await pool.query(`SELECT title FROM services WHERE id = $1`, [cls.service_id]);
+                                if (svcResult.rows.length > 0) serviceName = svcResult.rows[0].title;
                             }
-                            const { data: userInfo } = await admin.from('users').select('name, email').eq('id', metadata.userId).single();
-                            const pax = parseInt(metadata.pax, 10);
+                            const userResult = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [metadata.userId]);
+                            const userInfo = userResult.rows[0];
+
                             notifyBookingConfirmation(metadata.userId, { date: cls.date, time: cls.time, pax, serviceName }).catch(console.error);
                             notifyNewBookingToAdmin({
                                 studentName: userInfo?.name || 'Alumno',
@@ -126,15 +93,15 @@ export async function POST(req: Request) {
                                 pax,
                                 serviceName,
                             }).catch(console.error);
+                        } catch (e) {
+                            console.error("Error inserting booking from webhook:", e);
                         }
                     } else {
                         console.error("Class not found for ID:", metadata.classId);
                     }
                 } else {
-                    console.log("Booking already exists, skipping idempotency.");
+                    console.log("Booking already exists, skipping (idempotency).");
                 }
-            } else {
-                console.error("Unknown metadata configuration in checkout session payload.");
             }
         }
 

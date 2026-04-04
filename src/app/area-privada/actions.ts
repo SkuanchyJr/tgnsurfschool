@@ -1,114 +1,80 @@
 "use server";
 
-import { createClient } from "@/utils/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
+import { getUser } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { notifyBookingConfirmation, notifyNewBookingToAdmin } from "@/lib/notifications";
 
-/**
- * Book a spot in a scheduled class.
- * Enforces capacity: total active pax + requested pax must not exceed max_capacity.
- */
 export async function bookClass(
     classId: string,
     pax: number = 1
 ): Promise<{ success: boolean; error?: string }> {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const user = await getUser();
+    if (!user) return { success: false, error: "Debes iniciar sesión para reservar." };
 
-    if (authError || !user) {
-        return { success: false, error: "Debes iniciar sesión para reservar." };
-    }
+    const client = await pool.connect();
+    try {
+        const clsResult = await client.query(
+            `SELECT id, date, time, service_id, max_capacity, status FROM classes WHERE id = $1`,
+            [classId]
+        );
+        if (clsResult.rows.length === 0) return { success: false, error: "Clase no encontrada." };
+        const cls = clsResult.rows[0];
 
-    // 1. Fetch the class to check capacity and get date/time/service_id
-    const { data: cls, error: classError } = await supabaseAdmin
-        .from("classes")
-        .select("id, date, time, service_id, max_capacity, status")
-        .eq("id", classId)
-        .single();
+        if (cls.status === "CANCELLED") return { success: false, error: "Esta clase ha sido cancelada." };
 
-    if (classError || !cls) {
-        return { success: false, error: "Clase no encontrada." };
-    }
-    if (cls.status === "CANCELLED") {
-        return { success: false, error: "Esta clase ha sido cancelada." };
-    }
+        const paxResult = await client.query(
+            `SELECT COALESCE(SUM(pax), 0) as total FROM bookings WHERE class_id = $1 AND status != 'CANCELLED'`,
+            [classId]
+        );
+        const currentPax = parseInt(paxResult.rows[0].total, 10);
 
-    // 2. Compute current pax in this class (excluding CANCELLED bookings)
-    const { data: existingBookings } = await supabaseAdmin
-        .from("bookings")
-        .select("pax")
-        .eq("class_id", classId)
-        .neq("status", "CANCELLED");
+        if (currentPax + pax > cls.max_capacity) {
+            const remaining = cls.max_capacity - currentPax;
+            return {
+                success: false,
+                error: remaining <= 0
+                    ? "Esta clase ya no tiene plazas disponibles."
+                    : `Solo quedan ${remaining} plaza${remaining === 1 ? "" : "s"} disponibles.`,
+            };
+        }
 
-    const currentPax = (existingBookings || []).reduce((sum, b) => sum + (b.pax || 0), 0);
+        await client.query(
+            `INSERT INTO bookings (user_id, class_id, service_id, date, time, pax, status) VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')`,
+            [user.id, classId, cls.service_id, cls.date, cls.time, pax]
+        );
 
-    if (currentPax + pax > cls.max_capacity) {
-        const remaining = cls.max_capacity - currentPax;
-        return {
-            success: false,
-            error: remaining <= 0
-                ? "Esta clase ya no tiene plazas disponibles."
-                : `Solo quedan ${remaining} plaza${remaining === 1 ? '' : 's'} disponibles.`,
-        };
-    }
+        let serviceName = "Clase de Surf";
+        if (cls.service_id) {
+            const svcResult = await client.query(`SELECT title FROM services WHERE id = $1`, [cls.service_id]);
+            if (svcResult.rows.length > 0) serviceName = svcResult.rows[0].title;
+        }
 
-    // 3. Ensure user row exists in public.users (defensive FK fallback)
-    await supabaseAdmin.from("users").upsert(
-        { id: user.id, email: user.email, name: user.email?.split("@")[0] || "Alumno", role: "STUDENT" },
-        { onConflict: "id" }
-    );
+        const userResult = await client.query(`SELECT name, email FROM users WHERE id = $1`, [user.id]);
+        const userInfo = userResult.rows[0];
 
-    // 4. Insert the booking
-    const { error: insertError } = await supabaseAdmin.from("bookings").insert({
-        user_id: user.id,
-        class_id: classId,
-        service_id: cls.service_id,
-        date: cls.date,
-        time: cls.time,
-        pax,
-        status: "PENDING",
-    });
+        notifyBookingConfirmation(user.id, { date: cls.date, time: cls.time, pax, serviceName }).catch(console.error);
+        notifyNewBookingToAdmin({
+            studentName: userInfo?.name || user.email.split("@")[0],
+            studentEmail: userInfo?.email || user.email,
+            date: cls.date,
+            time: cls.time,
+            pax,
+            serviceName,
+        }).catch(console.error);
 
-    if (insertError) {
-        console.error("[bookClass] insert error:", insertError);
+        revalidatePath("/area-privada");
+        revalidatePath("/area-privada/clases");
+        revalidatePath("/area-privada/mis-reservas");
+        return { success: true };
+    } catch (e) {
+        console.error("[bookClass] Error:", e);
         return { success: false, error: "Error al crear la reserva. Inténtalo de nuevo." };
+    } finally {
+        client.release();
     }
-
-    // 5. Fetch service name for notifications
-    let serviceName = "Clase de Surf";
-    if (cls.service_id) {
-        const { data: svc } = await supabaseAdmin.from("services").select("title").eq("id", cls.service_id).single();
-        if (svc) serviceName = svc.title;
-    }
-
-    // 6. Get user info for admin notification
-    const { data: userInfo } = await supabaseAdmin.from("users").select("name, email").eq("id", user.id).single();
-
-    // 7. Send notifications (non-blocking)
-    notifyBookingConfirmation(user.id, {
-        date: cls.date,
-        time: cls.time,
-        pax,
-        serviceName,
-    }).catch(console.error);
-
-    notifyNewBookingToAdmin({
-        studentName: userInfo?.name || user.email?.split("@")[0] || "Alumno",
-        studentEmail: userInfo?.email || user.email || "",
-        date: cls.date,
-        time: cls.time,
-        pax,
-        serviceName,
-    }).catch(console.error);
-
-    revalidatePath("/area-privada");
-    revalidatePath("/area-privada/clases");
-    revalidatePath("/area-privada/mis-reservas");
-    return { success: true };
 }
 
-// ─── Level computation (mirrors client-side logic) ────────────────────────────
 function computeLevel(answers: Record<string, string>): string {
     let score = 0;
     if (answers.previous_surf === "yes_lots") score += 3;
@@ -130,17 +96,11 @@ function computeLevel(answers: Record<string, string>): string {
 }
 
 export async function saveAssessmentAction(formData: FormData) {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-        return { error: "Debes iniciar sesión para guardar la evaluación." };
-    }
+    const user = await getUser();
+    if (!user) return { error: "Debes iniciar sesión para guardar la evaluación." };
 
     const answersRaw = formData.get("answers") as string | null;
-    if (!answersRaw) {
-        return { error: "Faltan datos de la evaluación." };
-    }
+    if (!answersRaw) return { error: "Faltan datos de la evaluación." };
 
     let answers: Record<string, string> = {};
     try { answers = JSON.parse(answersRaw); } catch {
@@ -149,19 +109,15 @@ export async function saveAssessmentAction(formData: FormData) {
 
     const surf_level = computeLevel(answers);
 
-    const { error: updateError } = await supabaseAdmin
-        .from("users")
-        .update({
-            surf_level,
-            surf_assessment: answers,
-        })
-        .eq("id", user.id);
-
-    if (updateError) {
-        console.error("[saveAssessmentAction] update error:", updateError);
+    try {
+        await pool.query(
+            `UPDATE users SET surf_level = $1, surf_assessment = $2 WHERE id = $3`,
+            [surf_level, JSON.stringify(answers), user.id]
+        );
+        revalidatePath("/area-privada");
+        return { success: true };
+    } catch (e) {
+        console.error("[saveAssessmentAction] Error:", e);
         return { error: "Error al guardar la evaluación. Inténtalo de nuevo." };
     }
-
-    revalidatePath("/area-privada");
-    return { success: true };
 }

@@ -1,6 +1,6 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
 import { CalendarDays, Clock, Users, CheckCircle2, XCircle, AlertCircle, Hourglass } from "lucide-react";
 
 export const metadata = { title: "Mis Reservas | TGN Surf" };
@@ -17,26 +17,30 @@ const LEVEL_LABELS: Record<string, string> = {
 };
 
 export default async function MisReservasPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
-    const { data: bookings } = await supabaseAdmin
-        .from("bookings")
-        .select(`
-            id, date, time, pax, status, created_at, class_id,
-            services:service_id ( title, type ),
-            class:class_id (
-                level, duration_minutes,
-                class_instructors (
-                    status,
-                    instructor:instructor_id ( name )
-                )
-            )
-        `)
-        .eq("user_id", user.id)
-        .order("date", { ascending: false })
-        .order("time", { ascending: false });
+    const bookingsResult = await pool.query(
+        `SELECT b.id, b.date, b.time, b.pax, b.status, b.created_at, b.class_id,
+                s.title as service_title, s.type as service_type,
+                c.level as class_level, c.duration_minutes,
+                (SELECT u.name FROM class_instructors ci JOIN users u ON u.id = ci.instructor_id
+                 WHERE ci.class_id = b.class_id LIMIT 1) as instructor_name
+         FROM bookings b
+         LEFT JOIN services s ON s.id = b.service_id
+         LEFT JOIN classes c ON c.id = b.class_id
+         WHERE b.user_id = $1
+         ORDER BY b.date DESC, b.time DESC`,
+        [user.id]
+    );
+    const bookings = bookingsResult.rows.map((b: any) => ({
+        ...b,
+        services: { title: b.service_title, type: b.service_type },
+        class: {
+            level: b.class_level, duration_minutes: b.duration_minutes,
+            class_instructors: b.instructor_name ? [{ instructor: { name: b.instructor_name } }] : [],
+        },
+    }));
 
     const today = new Date().toISOString().split("T")[0];
     const upcoming = (bookings || []).filter((b: any) => b.date >= today && b.status !== "CANCELLED");

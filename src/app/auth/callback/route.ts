@@ -1,52 +1,51 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
+import pool from '@/lib/db'
+import { getSession } from '@/lib/session'
 
 export async function GET(request: Request) {
     const { searchParams, origin } = new URL(request.url)
-    const code = searchParams.get('code')
-    const next = searchParams.get('next') ?? '/area-privada'
+    const token = searchParams.get('token')
 
-    if (code) {
-        const supabase = await createClient()
-        const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code)
-
-        if (!error && sessionData?.user) {
-            const user = sessionData.user
-
-            // Ensure a public.users row exists for this user.
-            // This runs after email confirmation — the authoritative moment
-            // a user becomes "active" in the system.
-            const adminClient = createAdminClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                { auth: { autoRefreshToken: false, persistSession: false } }
-            )
-
-            const { error: upsertError } = await adminClient
-                .from('users')
-                .upsert(
-                    {
-                        id: user.id,
-                        email: user.email,
-                        name: user.user_metadata?.full_name
-                            || user.email?.split('@')[0]
-                            || 'Alumno',
-                        role: 'STUDENT', // safe default — admin can promote via Supabase dashboard
-                    },
-                    { onConflict: 'id' } // idempotent: re-sending confirmation email is safe
-                )
-
-            if (upsertError) {
-                // Log but do not block the user — they can still use the app.
-                // A broken users row is recoverable; blocking login is not.
-                console.error('[auth/callback] Failed to upsert public.users:', upsertError)
-            }
-
-            return NextResponse.redirect(`${origin}${next}`)
-        }
+    if (!token) {
+        return NextResponse.redirect(`${origin}/login?error=InvalidToken`)
     }
 
-    // Return the user to an error page with instructions
-    return NextResponse.redirect(`${origin}/login?error=InvalidToken`)
+    try {
+        const result = await pool.query(
+            `SELECT id, email, name, role, verification_token_expires
+             FROM users
+             WHERE verification_token = $1 AND email_verified = false`,
+            [token]
+        )
+
+        if (result.rows.length === 0) {
+            return NextResponse.redirect(`${origin}/login?error=InvalidToken`)
+        }
+
+        const user = result.rows[0]
+
+        if (new Date(user.verification_token_expires) < new Date()) {
+            return NextResponse.redirect(`${origin}/login?error=TokenExpired`)
+        }
+
+        await pool.query(
+            `UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expires = NULL WHERE id = $1`,
+            [user.id]
+        )
+
+        const session = await getSession()
+        session.user = {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            emailVerified: true,
+        }
+        await session.save()
+
+        return NextResponse.redirect(`${origin}/area-privada`)
+    } catch (e) {
+        console.error('[auth/callback] Error:', e)
+        return NextResponse.redirect(`${origin}/login?error=ServerError`)
+    }
 }

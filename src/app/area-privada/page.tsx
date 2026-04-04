@@ -1,6 +1,6 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
 import Link from "next/link";
 import {
     CalendarDays, Waves, ArrowRight, UserCircle, ShieldCheck,
@@ -47,88 +47,86 @@ const A_LABELS: Record<string, Record<string, string>> = {
 };
 
 export default async function AreaPrivadaPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const today = new Date().toISOString().split("T")[0];
-    const userName = user.email?.split("@")[0] || "Alumno";
 
     // Fetch user surf profile
-    const { data: profile } = await supabaseAdmin
-        .from("users")
-        .select("surf_level, surf_assessment, name")
-        .eq("id", user.id)
-        .single();
-
-    const surfLevel: string = (profile as any)?.surf_level || "BEGINNER";
-    const surfAssessment: Record<string, string> | null = (profile as any)?.surf_assessment || null;
-    const displayName = (profile as any)?.name || userName;
+    const profileResult = await pool.query(
+        `SELECT surf_level, surf_assessment, name FROM users WHERE id = $1`,
+        [user.id]
+    );
+    const profile = profileResult.rows[0] || {};
+    const surfLevel: string = profile.surf_level || "BEGINNER";
+    const surfAssessment: Record<string, string> | null = profile.surf_assessment || null;
+    const displayName = profile.name || user.name || "Alumno";
     const lv = LEVEL_CFG[surfLevel] || LEVEL_CFG.BEGINNER;
 
-    // Fetch bookings (both upcoming and past)
-    const { data: bookings } = await supabaseAdmin
-        .from("bookings")
-        .select(`id, date, time, pax, status, class_id, services:service_id (title, type), class:class_id (level)`)
-        .eq("user_id", user.id)
-        .order("date", { ascending: false }) // Sort desc so past bookings are newest first
-        .order("time", { ascending: false });
+    // Fetch bookings with service and class info
+    const bookingsResult = await pool.query(
+        `SELECT b.id, b.date, b.time, b.pax, b.status, b.class_id,
+                s.title as service_title, s.type as service_type,
+                c.level as class_level
+         FROM bookings b
+         LEFT JOIN services s ON s.id = b.service_id
+         LEFT JOIN classes c ON c.id = b.class_id
+         WHERE b.user_id = $1
+         ORDER BY b.date DESC, b.time DESC`,
+        [user.id]
+    );
+    const bookings = bookingsResult.rows.map((b: any) => ({
+        ...b,
+        services: { title: b.service_title, type: b.service_type },
+        class: { level: b.class_level },
+    }));
 
     // Separate upcoming and past
-    const upcoming = (bookings || [])
+    const upcoming = bookings
         .filter((b: any) => b.date >= today && b.status !== "CANCELLED")
-        .sort((a: any, b: any) => new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime()); // Ascending for upcoming
+        .sort((a: any, b: any) => new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime());
     
-    const past = (bookings || [])
+    const past = bookings
         .filter((b: any) => b.status === "COMPLETED" || (b.date < today && b.status !== "CANCELLED"));
 
     const nextBooking = upcoming[0] || null;
-    const totalBookings = (bookings || []).length;
+    const totalBookings = bookings.length;
     const upcomingCount = upcoming.length;
     const completedClassesCount = past.filter((b: any) => b.status === "COMPLETED").length;
 
-    // Fetch available classes
-    const { data: availableClasses } = await supabaseAdmin
-        .from("classes")
-        .select(`id, date, time, duration_minutes, level, max_capacity, service:service_id (title), class_instructors (instructor_id, status, instructor:instructor_id (name))`)
-        .eq("status", "SCHEDULED")
-        .gte("date", today)
-        .order("date", { ascending: true })
-        .order("time", { ascending: true })
-        .limit(10); // Fetch a few more to filter for recommendations
-
-    const classIds = (availableClasses || []).map((c: any) => c.id);
-    const { data: classBookings } = classIds.length > 0
-        ? await supabaseAdmin.from("bookings").select("class_id, pax").in("class_id", classIds).neq("status", "CANCELLED")
-        : { data: [] };
-
-    const paxByClass: Record<string, number> = {};
-    for (const b of (classBookings || [])) {
-        if (b.class_id) paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + b.pax;
-    }
+    // Fetch available classes with pax counts
+    const availableResult = await pool.query(
+        `SELECT c.id, c.date, c.time, c.duration_minutes, c.level, c.max_capacity,
+                s.title as service_title,
+                COALESCE((
+                    SELECT SUM(b.pax) FROM bookings b WHERE b.class_id = c.id AND b.status != 'CANCELLED'
+                ), 0) as booked_pax
+         FROM classes c
+         LEFT JOIN services s ON s.id = c.service_id
+         WHERE c.status = 'SCHEDULED' AND c.date >= $1
+         ORDER BY c.date ASC, c.time ASC
+         LIMIT 10`,
+        [today]
+    );
+    const availableClasses = availableResult.rows.map((c: any) => ({
+        ...c,
+        spots_left: c.max_capacity - parseInt(c.booked_pax, 10),
+        service: { title: c.service_title },
+    }));
 
     // Prepare Recommendations
-    const recommendedClasses = (availableClasses || [])
-        .filter((c: any) => c.level === surfLevel)
+    const recommendedClasses = availableClasses
+        .filter((c: any) => c.level === surfLevel && c.spots_left > 0)
+        .slice(0, 3)
         .map((c: any) => ({
-            id: c.id,
-            date: c.date,
-            time: c.time,
-            duration_minutes: c.duration_minutes,
-            level: c.level,
-            max_capacity: c.max_capacity,
-            spots_left: c.max_capacity - (paxByClass[c.id] || 0),
-            service_id: null,
-            service_title: c.service?.title,
-            service_type: null,
-            service_price: null,
-            notes: null
-        }))
-        .filter((c: any) => c.spots_left > 0)
-        .slice(0, 3); // Max 3 recommendations
+            id: c.id, date: c.date, time: c.time, duration_minutes: c.duration_minutes,
+            level: c.level, max_capacity: c.max_capacity, spots_left: c.spots_left,
+            service_id: null, service_title: c.service_title, service_type: null,
+            service_price: null, notes: null,
+        }));
 
     // Prepare general available classes (max 3 for the small widget)
-    const generalAvailableClasses = (availableClasses || []).slice(0, 3);
+    const generalAvailableClasses = availableClasses.slice(0, 3);
 
     return (
         <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-8">

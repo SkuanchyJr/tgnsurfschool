@@ -1,5 +1,5 @@
 import { getMyAssignedClasses } from "./actions";
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,8 +14,7 @@ const LEVEL_LABELS: Record<string, string> = {
 };
 
 export default async function InstructorDashboardPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const assignments = await getMyAssignedClasses();

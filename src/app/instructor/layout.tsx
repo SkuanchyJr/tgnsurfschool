@@ -1,6 +1,5 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
 import InstructorSidebar from "./InstructorSidebar";
 
 export default async function InstructorLayout({
@@ -8,19 +7,11 @@ export default async function InstructorLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
 
     if (!user) return redirect("/login");
 
-    // Verify role
-    const { data: publicUser } = await supabaseAdmin
-        .from("users")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
-    if (!publicUser || (publicUser.role !== "INSTRUCTOR" && publicUser.role !== "ADMIN")) {
+    if (user.role !== "INSTRUCTOR" && user.role !== "ADMIN") {
         return redirect("/area-privada");
     }
 

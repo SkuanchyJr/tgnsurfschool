@@ -1,7 +1,7 @@
 "use server";
 
-import { createClient } from "@/utils/supabase/server";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import pool from "@/lib/db";
+import { getUser } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import {
     notifyBookingStatusChange,
@@ -9,9 +9,6 @@ import {
     notifyClassCancelled,
 } from "@/lib/notifications";
 
-// ─────────────────────────────────────────────
-// Shared Types
-// ─────────────────────────────────────────────
 export type ClassLevel = 'BEGINNER' | 'INITIATION' | 'INTERMEDIATE' | 'ADVANCED' | 'UNDEFINED';
 export type ClassStatus = 'SCHEDULED' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
 export type InstructorAssignmentStatus = 'ASSIGNED' | 'ACCEPTED' | 'REJECTED';
@@ -44,175 +41,121 @@ export type SurfClassWithBookings = SurfClass & {
     booking_count: number;
 };
 
-// ─────────────────────────────────────────────
-// Helper: Admin Client (bypasses RLS)
-// ─────────────────────────────────────────────
-function getAdminClient() {
-    return createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-}
-
-// ─────────────────────────────────────────────
-// 1. Auth / Role Check
-// ─────────────────────────────────────────────
 export async function verifyAdminAccess(): Promise<{ hasAccess: boolean; user?: any }> {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !user) return { hasAccess: false };
-
-    const admin = getAdminClient();
-    const { data: publicUser } = await admin
-        .from('users')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-
-    if (!publicUser || (publicUser.role !== 'ADMIN' && publicUser.role !== 'INSTRUCTOR')) {
-        return { hasAccess: false };
-    }
-
+    const user = await getUser();
+    if (!user) return { hasAccess: false };
+    if (user.role !== 'ADMIN' && user.role !== 'INSTRUCTOR') return { hasAccess: false };
     return { hasAccess: true, user };
 }
 
-// ─────────────────────────────────────────────
-// 2. Bookings
-// ─────────────────────────────────────────────
 export async function getAllBookings() {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
 
-    const admin = getAdminClient();
-    const { data } = await admin
-        .from('bookings')
-        .select(`
-            id, date, time, pax, status,
-            users (id, name, email, phone),
-            services (id, title, type, price)
-        `)
-        .order('date', { ascending: false })
-        .order('time', { ascending: false });
+    const result = await pool.query(
+        `SELECT
+            b.id, b.date, b.time, b.pax, b.status,
+            u.id as user_id, u.name as user_name, u.email as user_email, u.phone as user_phone,
+            s.id as service_id, s.title as service_title, s.type as service_type, s.price as service_price
+         FROM bookings b
+         LEFT JOIN users u ON u.id = b.user_id
+         LEFT JOIN services s ON s.id = b.service_id
+         ORDER BY b.date DESC, b.time DESC`
+    );
 
-    return (data || []).map(b => ({
-        ...b,
-        users: Array.isArray(b.users) ? b.users[0] : b.users,
-        services: Array.isArray(b.services) ? b.services[0] : b.services,
-    })) as any[];
+    return result.rows.map((b: any) => ({
+        id: b.id,
+        date: b.date,
+        time: b.time,
+        pax: b.pax,
+        status: b.status,
+        users: { id: b.user_id, name: b.user_name, email: b.user_email, phone: b.user_phone },
+        services: { id: b.service_id, title: b.service_title, type: b.service_type, price: b.service_price },
+    }));
 }
 
 export async function updateBookingStatus(bookingId: string, newStatus: string) {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
-    const { error } = await admin
-        .from('bookings')
-        .update({ status: newStatus })
-        .eq('id', bookingId);
-
-    if (error) return { success: false, error: "No se pudo actualizar el estado" };
-
-    // Notify the student about the status change (non-blocking)
-    notifyBookingStatusChange(bookingId, newStatus).catch(console.error);
-
-    revalidatePath('/admin');
-    revalidatePath('/area-privada');
-    return { success: true };
+    try {
+        await pool.query(`UPDATE bookings SET status = $1 WHERE id = $2`, [newStatus, bookingId]);
+        notifyBookingStatusChange(bookingId, newStatus).catch(console.error);
+        revalidatePath('/admin');
+        revalidatePath('/area-privada');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: "No se pudo actualizar el estado" };
+    }
 }
 
-// ─────────────────────────────────────────────
-// 3. Users — Students & Instructors
-// ─────────────────────────────────────────────
 export async function getAllStudents() {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
 
-    const admin = getAdminClient();
-    const { data } = await admin
-        .from('users')
-        .select(`*, bookings (count)`)
-        .eq('role', 'STUDENT')
-        .order('created_at', { ascending: false });
-
-    return data || [];
+    const result = await pool.query(
+        `SELECT u.*, COUNT(b.id) as booking_count
+         FROM users u
+         LEFT JOIN bookings b ON b.user_id = u.id
+         WHERE u.role = 'STUDENT'
+         GROUP BY u.id
+         ORDER BY u.created_at DESC`
+    );
+    return result.rows;
 }
 
 export async function getAllInstructors() {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
 
-    const admin = getAdminClient();
-    const { data } = await admin
-        .from('users')
-        .select(`*`)
-        .in('role', ['INSTRUCTOR', 'ADMIN'])
-        .order('name', { ascending: true });
-
-    return data || [];
+    const result = await pool.query(
+        `SELECT * FROM users WHERE role IN ('INSTRUCTOR', 'ADMIN') ORDER BY name ASC`
+    );
+    return result.rows;
 }
 
 export async function getStudentDetail(id: string) {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
 
-    const admin = getAdminClient();
-    
-    // 1. Fetch student profile
-    const { data: student, error: studentError } = await admin
-        .from('users')
-        .select(`*`)
-        .eq('id', id)
-        .single();
+    const studentResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [id]);
+    if (studentResult.rows.length === 0) return null;
+    const student = studentResult.rows[0];
 
-    if (studentError || !student) return null;
-
-    // 2. Fetch student bookings with service info
-    const { data: bookings, error: bookingsError } = await admin
-        .from('bookings')
-        .select(`
-            id, date, time, pax, status,
-            services (id, title, type, price)
-        `)
-        .eq('user_id', id)
-        .order('date', { ascending: false })
-        .order('time', { ascending: false });
+    const bookingsResult = await pool.query(
+        `SELECT b.id, b.date, b.time, b.pax, b.status,
+                s.id as service_id, s.title as service_title, s.type as service_type, s.price as service_price
+         FROM bookings b
+         LEFT JOIN services s ON s.id = b.service_id
+         WHERE b.user_id = $1
+         ORDER BY b.date DESC, b.time DESC`,
+        [id]
+    );
 
     return {
         ...student,
-        bookings: (bookings || []).map(b => ({
+        bookings: bookingsResult.rows.map((b: any) => ({
             ...b,
-            services: Array.isArray(b.services) ? b.services[0] : b.services,
-        })) as any[]
+            services: { id: b.service_id, title: b.service_title, type: b.service_type, price: b.service_price },
+        })),
     };
 }
 
-// ─────────────────────────────────────────────
-// 4. Services Catalog CRUD
-// ─────────────────────────────────────────────
 export async function createService(serviceData: {
     title: string; type: string; description: string | null; price: number;
 }) {
     try {
         const { hasAccess } = await verifyAdminAccess();
-        if (!hasAccess) {
-            return { success: false, error: "Acceso denegado" };
-        }
+        if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-        const admin = getAdminClient();
-        const { error } = await admin
-            .from('services')
-            .insert([{ ...serviceData, is_active: true }]);
-
-        if (error) {
-            return { success: false, error: error.message };
-        }
-        
+        await pool.query(
+            `INSERT INTO services (title, type, description, price, is_active) VALUES ($1, $2, $3, $4, true)`,
+            [serviceData.title, serviceData.type, serviceData.description, serviceData.price]
+        );
         revalidatePath('/admin/services');
         return { success: true };
-    } catch (err: any) {
-        return { success: false, error: err.message || "Error inesperado" };
+    } catch (e: any) {
+        return { success: false, error: e.message || "Error inesperado" };
     }
 }
 
@@ -223,20 +166,14 @@ export async function updateService(id: string, serviceData: {
         const { hasAccess } = await verifyAdminAccess();
         if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-        const admin = getAdminClient();
-        const { error } = await admin
-            .from('services')
-            .update(serviceData)
-            .eq('id', id);
-
-        if (error) {
-            return { success: false, error: error.message };
-        }
-
+        await pool.query(
+            `UPDATE services SET title = $1, type = $2, description = $3, price = $4 WHERE id = $5`,
+            [serviceData.title, serviceData.type, serviceData.description, serviceData.price, id]
+        );
         revalidatePath('/admin/services');
         return { success: true };
-    } catch (err: any) {
-        return { success: false, error: err.message || "Error inesperado" };
+    } catch (e: any) {
+        return { success: false, error: e.message || "Error inesperado" };
     }
 }
 
@@ -244,100 +181,86 @@ export async function deleteService(id: string) {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
-    const { error } = await admin.from('services').delete().eq('id', id);
-
-    if (error) return { success: false, error: error.message };
-    revalidatePath('/admin/services');
-    return { success: true };
+    try {
+        await pool.query(`DELETE FROM services WHERE id = $1`, [id]);
+        revalidatePath('/admin/services');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
 }
 
-// ─────────────────────────────────────────────
-// 5. Class Sessions CRUD
-// ─────────────────────────────────────────────
-export async function getClasses(): Promise<SurfClassWithBookings[]> {
-    const { hasAccess } = await verifyAdminAccess();
-    if (!hasAccess) throw new Error("Acceso denegado");
+async function getClassesWithBookings(whereClause: string, params: any[]): Promise<SurfClassWithBookings[]> {
+    const classesResult = await pool.query(
+        `SELECT c.*, s.title as service_title, s.type as service_type
+         FROM classes c
+         LEFT JOIN services s ON s.id = c.service_id
+         ${whereClause}
+         ORDER BY c.date ASC, c.time ASC`,
+        params
+    );
+    if (classesResult.rows.length === 0) return [];
 
-    const admin = getAdminClient();
-    const { data: classes, error } = await admin
-        .from('classes')
-        .select(`
-            *,
-            service:service_id ( title, type ),
-            class_instructors (
-                id, instructor_id, status,
-                instructor:instructor_id ( id, name, email )
-            )
-        `)
-        .order('date', { ascending: true })
-        .order('time', { ascending: true });
+    const classIds = classesResult.rows.map((c: any) => c.id);
 
-    if (error || !classes) return [];
-
-    const classIds = (classes as any[]).map(c => c.id);
-    const { data: bookings } = classIds.length > 0
-        ? await admin.from('bookings').select('class_id, pax').in('class_id', classIds).neq('status', 'CANCELLED')
-        : { data: [] };
-
+    const bookingsResult = await pool.query(
+        `SELECT class_id, pax FROM bookings WHERE class_id = ANY($1::uuid[]) AND status != 'CANCELLED'`,
+        [classIds]
+    );
     const paxByClass: Record<string, number> = {};
     const countByClass: Record<string, number> = {};
-    for (const b of (bookings || [])) {
-        if (b.class_id) {
-            paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + b.pax;
-            countByClass[b.class_id] = (countByClass[b.class_id] || 0) + 1;
-        }
+    for (const b of bookingsResult.rows) {
+        paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + parseInt(b.pax, 10);
+        countByClass[b.class_id] = (countByClass[b.class_id] || 0) + 1;
     }
 
-    return (classes as any[]).map(c => ({
-        ...c,
+    const instrResult = await pool.query(
+        `SELECT ci.class_id, ci.id, ci.instructor_id, ci.status, u.id as u_id, u.name, u.email
+         FROM class_instructors ci
+         JOIN users u ON u.id = ci.instructor_id
+         WHERE ci.class_id = ANY($1::uuid[])`,
+        [classIds]
+    );
+    const instrByClass: Record<string, ClassInstructor[]> = {};
+    for (const row of instrResult.rows) {
+        if (!instrByClass[row.class_id]) instrByClass[row.class_id] = [];
+        instrByClass[row.class_id].push({
+            id: row.id,
+            instructor_id: row.instructor_id,
+            status: row.status,
+            instructor: { id: row.u_id, name: row.name, email: row.email },
+        });
+    }
+
+    return classesResult.rows.map((c: any) => ({
+        id: c.id,
+        service_id: c.service_id,
+        date: c.date,
+        time: c.time,
+        duration_minutes: c.duration_minutes,
+        level: c.level,
+        max_capacity: c.max_capacity,
+        status: c.status,
+        location: c.location,
+        notes: c.notes,
+        created_at: c.created_at,
+        service: c.service_title ? { title: c.service_title, type: c.service_type } : null,
+        class_instructors: instrByClass[c.id] || [],
         total_pax: paxByClass[c.id] || 0,
         booking_count: countByClass[c.id] || 0,
     }));
+}
+
+export async function getClasses(): Promise<SurfClassWithBookings[]> {
+    const { hasAccess } = await verifyAdminAccess();
+    if (!hasAccess) throw new Error("Acceso denegado");
+    return getClassesWithBookings("", []);
 }
 
 export async function getClassesForDate(date: string): Promise<SurfClassWithBookings[]> {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
-
-    const admin = getAdminClient();
-    const { data: classes } = await admin
-        .from('classes')
-        .select(`
-            *,
-            service:service_id ( title, type ),
-            class_instructors (
-                id, instructor_id, status,
-                instructor:instructor_id ( id, name, email )
-            )
-        `)
-        .eq('date', date)
-        .neq('status', 'CANCELLED')
-        .order('time', { ascending: true });
-
-    if (!classes || classes.length === 0) return [];
-
-    const classIds = (classes as any[]).map(c => c.id);
-    const { data: bookings } = await admin
-        .from('bookings')
-        .select('class_id, pax')
-        .in('class_id', classIds)
-        .neq('status', 'CANCELLED');
-
-    const paxByClass: Record<string, number> = {};
-    const countByClass: Record<string, number> = {};
-    for (const b of (bookings || [])) {
-        if (b.class_id) {
-            paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + b.pax;
-            countByClass[b.class_id] = (countByClass[b.class_id] || 0) + 1;
-        }
-    }
-
-    return (classes as any[]).map(c => ({
-        ...c,
-        total_pax: paxByClass[c.id] || 0,
-        booking_count: countByClass[c.id] || 0,
-    }));
+    return getClassesWithBookings("WHERE c.date = $1 AND c.status != 'CANCELLED'", [date]);
 }
 
 export async function createClass(data: {
@@ -354,45 +277,48 @@ export async function createClass(data: {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
     const { instructorIds, ...classData } = data;
 
-    const { data: created, error } = await admin
-        .from('classes')
-        .insert({ ...classData, status: 'SCHEDULED' })
-        .select('id')
-        .single();
+    try {
+        const result = await pool.query(
+            `INSERT INTO classes (service_id, date, time, duration_minutes, level, max_capacity, location, notes, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'SCHEDULED') RETURNING id`,
+            [classData.service_id, classData.date, classData.time, classData.duration_minutes,
+             classData.level, classData.max_capacity, classData.location ?? null, classData.notes ?? null]
+        );
+        const createdId = result.rows[0].id;
 
-    if (error) return { success: false, error: error.message };
+        if (instructorIds && instructorIds.length > 0) {
+            for (const instructorId of instructorIds) {
+                await pool.query(
+                    `INSERT INTO class_instructors (class_id, instructor_id, status) VALUES ($1, $2, 'ASSIGNED')
+                     ON CONFLICT (class_id, instructor_id) DO NOTHING`,
+                    [createdId, instructorId]
+                );
+            }
 
-    // Bulk assign instructors if provided
-    if (instructorIds && instructorIds.length > 0) {
-        const assignments = instructorIds.map(instructorId => ({
-            class_id: created.id,
-            instructor_id: instructorId,
-            status: 'ASSIGNED'
-        }));
-        await admin.from('class_instructors').insert(assignments);
-
-        // Notify each assigned instructor (non-blocking)
-        let serviceName = "Clase de Surf";
-        if (data.service_id) {
-            const { data: svc } = await admin.from('services').select('title').eq('id', data.service_id).single();
-            if (svc) serviceName = svc.title;
+            let serviceName = "Clase de Surf";
+            if (data.service_id) {
+                const svcResult = await pool.query(`SELECT title FROM services WHERE id = $1`, [data.service_id]);
+                if (svcResult.rows.length > 0) serviceName = svcResult.rows[0].title;
+            }
+            for (const iid of instructorIds) {
+                notifyClassAssignment(iid, {
+                    classId: createdId,
+                    date: data.date,
+                    time: data.time,
+                    level: data.level,
+                    serviceName,
+                }).catch(console.error);
+            }
         }
-        for (const iid of instructorIds) {
-            notifyClassAssignment(iid, {
-                classId: created.id,
-                date: data.date,
-                time: data.time,
-                level: data.level,
-                serviceName,
-            }).catch(console.error);
-        }
+
+        revalidatePath('/admin/classes');
+        revalidatePath('/admin');
+        return { success: true, id: createdId };
+    } catch (e: any) {
+        return { success: false, error: e.message };
     }
-    revalidatePath('/admin/classes');
-    revalidatePath('/admin');
-    return { success: true, id: created.id };
 }
 
 export async function updateClass(id: string, data: Partial<{
@@ -410,125 +336,126 @@ export async function updateClass(id: string, data: Partial<{
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
     const { instructorIds, ...classData } = data;
 
-    const { error } = await admin.from('classes').update(classData).eq('id', id);
+    const setClauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
 
-    if (error) return { success: false, error: error.message };
-
-    // Sync instructors if provided
-    if (instructorIds !== undefined) {
-        // Delete all and re-add (simple strategy for now)
-        await admin.from('class_instructors').delete().eq('class_id', id);
-        
-        if (instructorIds.length > 0) {
-            const assignments = instructorIds.map(instructorId => ({
-                class_id: id,
-                instructor_id: instructorId,
-                status: 'ASSIGNED'
-            }));
-            await admin.from('class_instructors').insert(assignments);
-        }
+    for (const [key, value] of Object.entries(classData)) {
+        setClauses.push(`${key} = $${idx++}`);
+        values.push(value);
     }
-    revalidatePath('/admin/classes');
-    revalidatePath('/admin');
-    return { success: true };
+
+    try {
+        if (setClauses.length > 0) {
+            values.push(id);
+            await pool.query(`UPDATE classes SET ${setClauses.join(", ")} WHERE id = $${idx}`, values);
+        }
+
+        if (instructorIds !== undefined) {
+            await pool.query(`DELETE FROM class_instructors WHERE class_id = $1`, [id]);
+            for (const instructorId of instructorIds) {
+                await pool.query(
+                    `INSERT INTO class_instructors (class_id, instructor_id, status) VALUES ($1, $2, 'ASSIGNED')
+                     ON CONFLICT (class_id, instructor_id) DO NOTHING`,
+                    [id, instructorId]
+                );
+            }
+        }
+
+        revalidatePath('/admin/classes');
+        revalidatePath('/admin');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
 }
 
 export async function cancelClass(id: string): Promise<{ success: boolean; error?: string }> {
     const result = await updateClass(id, { status: 'CANCELLED' });
     if (result.success) {
-        // Notify all affected students and instructors (non-blocking)
         notifyClassCancelled(id).catch(console.error);
     }
     return result;
 }
 
-// ─────────────────────────────────────────────
-// 6. Instructor Assignment
-// ─────────────────────────────────────────────
-export async function assignInstructor(
-    classId: string,
-    instructorId: string
-): Promise<{ success: boolean; error?: string }> {
+export async function assignInstructor(classId: string, instructorId: string): Promise<{ success: boolean; error?: string }> {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
-    const { error } = await admin
-        .from('class_instructors')
-        .upsert(
-            { class_id: classId, instructor_id: instructorId, status: 'ASSIGNED' },
-            { onConflict: 'class_id,instructor_id' }
+    try {
+        await pool.query(
+            `INSERT INTO class_instructors (class_id, instructor_id, status) VALUES ($1, $2, 'ASSIGNED')
+             ON CONFLICT (class_id, instructor_id) DO UPDATE SET status = 'ASSIGNED'`,
+            [classId, instructorId]
         );
 
-    if (error) return { success: false, error: error.message };
+        const clsResult = await pool.query(
+            `SELECT c.date, c.time, c.level, s.title as service_title
+             FROM classes c LEFT JOIN services s ON s.id = c.service_id
+             WHERE c.id = $1`,
+            [classId]
+        );
+        if (clsResult.rows.length > 0) {
+            const cls = clsResult.rows[0];
+            notifyClassAssignment(instructorId, {
+                classId,
+                date: cls.date,
+                time: cls.time,
+                level: cls.level,
+                serviceName: cls.service_title || "Clase de Surf",
+            }).catch(console.error);
+        }
 
-    // Notify instructor about the assignment (non-blocking)
-    const { data: cls } = await admin
-        .from('classes')
-        .select('date, time, level, service:service_id(title)')
-        .eq('id', classId)
-        .single();
-
-    if (cls) {
-        const service = cls.service ? (Array.isArray(cls.service) ? cls.service[0] : cls.service) : null;
-        notifyClassAssignment(instructorId, {
-            classId,
-            date: cls.date,
-            time: cls.time,
-            level: cls.level,
-            serviceName: (service as any)?.title || "Clase de Surf",
-        }).catch(console.error);
+        revalidatePath('/admin/classes');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
     }
-
-    revalidatePath('/admin/classes');
-    return { success: true };
 }
 
-export async function removeInstructor(
-    classId: string,
-    instructorId: string
-): Promise<{ success: boolean; error?: string }> {
+export async function removeInstructor(classId: string, instructorId: string): Promise<{ success: boolean; error?: string }> {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
 
-    const admin = getAdminClient();
-    const { error } = await admin
-        .from('class_instructors')
-        .delete()
-        .eq('class_id', classId)
-        .eq('instructor_id', instructorId);
-
-    if (error) return { success: false, error: error.message };
-    revalidatePath('/admin/classes');
-    return { success: true };
+    try {
+        await pool.query(
+            `DELETE FROM class_instructors WHERE class_id = $1 AND instructor_id = $2`,
+            [classId, instructorId]
+        );
+        revalidatePath('/admin/classes');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
 }
 
-// ─────────────────────────────────────────────
-// 7. Class Bookings (roster view)
-// ─────────────────────────────────────────────
 export async function getClassBookings(classId: string) {
     const { hasAccess } = await verifyAdminAccess();
     if (!hasAccess) throw new Error("Acceso denegado");
 
-    const admin = getAdminClient();
-    const { data } = await admin
-        .from('bookings')
-        .select(`id, date, time, pax, status, created_at, users (id, name, email, phone)`)
-        .eq('class_id', classId)
-        .order('created_at', { ascending: true });
+    const result = await pool.query(
+        `SELECT b.id, b.date, b.time, b.pax, b.status, b.created_at,
+                u.id as user_id, u.name as user_name, u.email as user_email, u.phone as user_phone
+         FROM bookings b
+         LEFT JOIN users u ON u.id = b.user_id
+         WHERE b.class_id = $1
+         ORDER BY b.created_at ASC`,
+        [classId]
+    );
 
-    return (data || []).map(b => ({
-        ...b,
-        users: Array.isArray(b.users) ? b.users[0] : b.users,
-    })) as any[];
+    return result.rows.map((b: any) => ({
+        id: b.id,
+        date: b.date,
+        time: b.time,
+        pax: b.pax,
+        status: b.status,
+        created_at: b.created_at,
+        users: { id: b.user_id, name: b.user_name, email: b.user_email, phone: b.user_phone },
+    }));
 }
 
-// ─────────────────────────────────────────────
-// 8. Class Merge
-// ─────────────────────────────────────────────
 export async function mergeClasses(
     sourceClassId: string,
     targetClassId: string
@@ -537,68 +464,53 @@ export async function mergeClasses(
     if (!hasAccess) return { success: false, error: "Acceso denegado" };
     if (sourceClassId === targetClassId) return { success: false, error: "Selecciona una clase diferente como destino." };
 
-    const admin = getAdminClient();
+    const client = await pool.connect();
+    try {
+        const classesResult = await client.query(
+            `SELECT id, date, time, max_capacity, status, notes FROM classes WHERE id = ANY($1::uuid[])`,
+            [[sourceClassId, targetClassId]]
+        );
+        const source = classesResult.rows.find((c: any) => c.id === sourceClassId);
+        const target = classesResult.rows.find((c: any) => c.id === targetClassId);
 
-    // 1. Fetch both classes
-    const { data: classes } = await admin
-        .from('classes')
-        .select('id, date, time, max_capacity, status, notes')
-        .in('id', [sourceClassId, targetClassId]);
+        if (!source || !target) return { success: false, error: "Una de las clases no existe." };
+        if (source.status === 'CANCELLED') return { success: false, error: "La clase origen ya está cancelada." };
+        if (target.status === 'CANCELLED') return { success: false, error: "La clase destino está cancelada." };
 
-    const source = (classes || []).find((c: any) => c.id === sourceClassId);
-    const target = (classes || []).find((c: any) => c.id === targetClassId);
+        const paxResult = await client.query(
+            `SELECT class_id, SUM(pax) as total FROM bookings
+             WHERE class_id = ANY($1::uuid[]) AND status != 'CANCELLED'
+             GROUP BY class_id`,
+            [[sourceClassId, targetClassId]]
+        );
+        const paxByClass: Record<string, number> = {};
+        for (const r of paxResult.rows) paxByClass[r.class_id] = parseInt(r.total, 10);
 
-    if (!source || !target) return { success: false, error: "Una de las clases no existe." };
-    if (source.status === 'CANCELLED') return { success: false, error: "La clase origen ya está cancelada." };
-    if (target.status === 'CANCELLED') return { success: false, error: "La clase destino está cancelada." };
+        const combinedPax = (paxByClass[sourceClassId] || 0) + (paxByClass[targetClassId] || 0);
+        if (combinedPax > target.max_capacity) {
+            return {
+                success: false,
+                error: `No hay capacidad suficiente. Combinado: ${combinedPax} alumnos, máximo de destino: ${target.max_capacity}.`,
+            };
+        }
 
-    // 2. Compute current pax in both classes (exclude CANCELLED bookings)
-    const { data: bookingsData } = await admin
-        .from('bookings')
-        .select('class_id, pax')
-        .in('class_id', [sourceClassId, targetClassId])
-        .neq('status', 'CANCELLED');
+        await client.query(
+            `UPDATE bookings SET class_id = $1 WHERE class_id = $2 AND status != 'CANCELLED'`,
+            [targetClassId, sourceClassId]
+        );
 
-    const paxByClass: Record<string, number> = {};
-    for (const b of (bookingsData || [])) {
-        if (b.class_id) paxByClass[b.class_id] = (paxByClass[b.class_id] || 0) + b.pax;
+        const mergeNote = `Fusionada en clase ${targetClassId} el ${new Date().toLocaleDateString('es-ES')}. ${source.notes ? '| ' + source.notes : ''}`.trim();
+        await client.query(
+            `UPDATE classes SET status = 'CANCELLED', notes = $1, merged_into_class_id = $2 WHERE id = $3`,
+            [mergeNote, targetClassId, sourceClassId]
+        );
+
+        revalidatePath('/admin/classes');
+        revalidatePath('/admin');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    } finally {
+        client.release();
     }
-
-    const sourcePax = paxByClass[sourceClassId] || 0;
-    const targetPax = paxByClass[targetClassId] || 0;
-    const combinedPax = sourcePax + targetPax;
-
-    if (combinedPax > target.max_capacity) {
-        return {
-            success: false,
-            error: `No hay capacidad suficiente. Combinado: ${combinedPax} alumnos, máximo de destino: ${target.max_capacity}.`,
-        };
-    }
-
-    // 3. Move all bookings from source → target
-    const { error: moveError } = await admin
-        .from('bookings')
-        .update({ class_id: targetClassId })
-        .eq('class_id', sourceClassId)
-        .neq('status', 'CANCELLED');
-
-    if (moveError) return { success: false, error: `Error al transferir reservas: ${moveError.message}` };
-
-    // 4. Cancel source class with traceability
-    const mergeNote = `Fusionada en clase ${targetClassId} el ${new Date().toLocaleDateString('es-ES')}. ${source.notes ? '| ' + source.notes : ''}`.trim();
-    const { error: cancelError } = await admin
-        .from('classes')
-        .update({
-            status: 'CANCELLED',
-            notes: mergeNote,
-            merged_into_class_id: targetClassId,
-        })
-        .eq('id', sourceClassId);
-
-    if (cancelError) return { success: false, error: `Error al cancelar clase origen: ${cancelError.message}` };
-
-    revalidatePath('/admin/classes');
-    revalidatePath('/admin');
-    return { success: true };
 }
-

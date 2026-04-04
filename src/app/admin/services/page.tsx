@@ -1,18 +1,14 @@
-import { createClient } from "@supabase/supabase-js";
+import pool from "@/lib/db";
 import ClassesClientUI from "../classes/ClassesClientUI";
 import { Package } from "lucide-react";
 
 export const metadata = { title: "Servicios | Admin TGN Surf" };
 
 export default async function AdminServicesPage() {
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const servicesResult = await pool.query(
+        `SELECT * FROM services ORDER BY type ASC`
     );
-    const { data: services } = await supabase
-        .from("services")
-        .select("*")
-        .order("type", { ascending: true });
+    const services = servicesResult.rows;
 
     return (
         <div className="p-8 max-w-7xl mx-auto">

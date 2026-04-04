@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import pool from "@/lib/db";
 import {
     sendEmail,
     emailHeading,
@@ -10,21 +10,8 @@ import {
     emailDivider,
 } from "./email";
 
-// ─────────────────────────────────────────────
-// Admin Supabase Client (server-only)
-// ─────────────────────────────────────────────
-function getAdmin() {
-    return createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-}
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:5000";
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-
-// ─────────────────────────────────────────────
-// Helper: Save In-App Notification
-// ─────────────────────────────────────────────
 async function saveNotification(data: {
     user_id: string;
     type: string;
@@ -32,46 +19,33 @@ async function saveNotification(data: {
     message: string;
     link?: string;
 }) {
-    const admin = getAdmin();
-    const { error } = await admin.from("notifications").insert(data);
-    if (error) console.error("[saveNotification] Error:", error.message);
+    try {
+        await pool.query(
+            `INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, $2, $3, $4, $5)`,
+            [data.user_id, data.type, data.title, data.message, data.link ?? null]
+        );
+    } catch (e) {
+        console.error("[saveNotification] Error:", e);
+    }
 }
 
-// ─────────────────────────────────────────────
-// Helper: Get admin emails
-// ─────────────────────────────────────────────
 async function getAdminUsers() {
-    const admin = getAdmin();
-    const { data } = await admin
-        .from("users")
-        .select("id, email, name")
-        .eq("role", "ADMIN");
-    return data || [];
+    const result = await pool.query<{ id: string; email: string; name: string }>(
+        `SELECT id, email, name FROM users WHERE role = 'ADMIN'`
+    );
+    return result.rows;
 }
 
-// ─────────────────────────────────────────────
-// Helper: Get user info
-// ─────────────────────────────────────────────
 async function getUserInfo(userId: string) {
-    const admin = getAdmin();
-    const { data } = await admin
-        .from("users")
-        .select("id, email, name, role")
-        .eq("id", userId)
-        .single();
-    return data;
+    const result = await pool.query<{ id: string; email: string; name: string; role: string }>(
+        `SELECT id, email, name, role FROM users WHERE id = $1`,
+        [userId]
+    );
+    return result.rows[0] ?? null;
 }
 
-// ═════════════════════════════════════════════
-// NOTIFICATION FUNCTIONS
-// ═════════════════════════════════════════════
-
-/**
- * 1. Welcome email — sent when a student registers
- */
 export async function notifyWelcome(userId: string, email: string, name: string) {
     try {
-        // In-app
         await saveNotification({
             user_id: userId,
             type: "WELCOME",
@@ -80,7 +54,6 @@ export async function notifyWelcome(userId: string, email: string, name: string)
             link: "/area-privada",
         });
 
-        // Email
         const body = [
             emailHeading("¡Bienvenido/a a TGN Surf School! 🏄"),
             emailParagraph(`Hola <strong>${name}</strong>,`),
@@ -99,9 +72,6 @@ export async function notifyWelcome(userId: string, email: string, name: string)
     }
 }
 
-/**
- * 2. Booking confirmation — sent to the student after booking
- */
 export async function notifyBookingConfirmation(
     userId: string,
     details: { date: string; time: string; pax: number; serviceName?: string }
@@ -114,7 +84,6 @@ export async function notifyBookingConfirmation(
             weekday: "long", day: "numeric", month: "long", year: "numeric",
         });
 
-        // In-app
         await saveNotification({
             user_id: userId,
             type: "BOOKING_CONFIRMED",
@@ -123,7 +92,6 @@ export async function notifyBookingConfirmation(
             link: "/area-privada/mis-reservas",
         });
 
-        // Email
         const body = [
             emailHeading("¡Reserva confirmada! ✅"),
             emailParagraph(`Hola <strong>${user.name}</strong>,`),
@@ -144,9 +112,6 @@ export async function notifyBookingConfirmation(
     }
 }
 
-/**
- * 3. New booking alert — sent to all admin users
- */
 export async function notifyNewBookingToAdmin(details: {
     studentName: string;
     studentEmail: string;
@@ -162,7 +127,6 @@ export async function notifyNewBookingToAdmin(details: {
         });
 
         for (const admin of admins) {
-            // In-app
             await saveNotification({
                 user_id: admin.id,
                 type: "NEW_BOOKING",
@@ -172,7 +136,6 @@ export async function notifyNewBookingToAdmin(details: {
             });
         }
 
-        // Email to first admin (or all)
         const body = [
             emailHeading("Nueva reserva recibida 📋"),
             emailParagraph("Se ha registrado una nueva reserva:"),
@@ -194,27 +157,21 @@ export async function notifyNewBookingToAdmin(details: {
     }
 }
 
-/**
- * 4. Booking status change — sent to the student
- */
-export async function notifyBookingStatusChange(
-    bookingId: string,
-    newStatus: string
-) {
+export async function notifyBookingStatusChange(bookingId: string, newStatus: string) {
     try {
-        const adminClient = getAdmin();
-        const { data: booking } = await adminClient
-            .from("bookings")
-            .select("user_id, date, time, pax, services(title)")
-            .eq("id", bookingId)
-            .single();
-
-        if (!booking) return;
+        const result = await pool.query(
+            `SELECT b.user_id, b.date, b.time, b.pax, s.title as service_title
+             FROM bookings b
+             LEFT JOIN services s ON s.id = b.service_id
+             WHERE b.id = $1`,
+            [bookingId]
+        );
+        if (result.rows.length === 0) return;
+        const booking = result.rows[0];
 
         const user = await getUserInfo(booking.user_id);
         if (!user) return;
 
-        const service = Array.isArray(booking.services) ? booking.services[0] : booking.services;
         const dateStr = new Date(booking.date).toLocaleDateString("es-ES", {
             weekday: "long", day: "numeric", month: "long",
         });
@@ -225,26 +182,23 @@ export async function notifyBookingStatusChange(
             COMPLETED: "🎉 Completada",
             PENDING: "⏳ Pendiente",
         };
-
         const statusLabel = statusLabels[newStatus] || newStatus;
         const isCancelled = newStatus === "CANCELLED";
 
-        // In-app
         await saveNotification({
             user_id: user.id,
             type: "BOOKING_STATUS_CHANGE",
             title: `Reserva ${statusLabel}`,
-            message: `Tu reserva de ${service?.title || "clase de surf"} del ${dateStr} ha sido ${statusLabel.toLowerCase()}.`,
+            message: `Tu reserva de ${booking.service_title || "clase de surf"} del ${dateStr} ha sido ${statusLabel.toLowerCase()}.`,
             link: "/area-privada/mis-reservas",
         });
 
-        // Email
         const body = [
             emailHeading(`Reserva ${statusLabel}`),
             emailParagraph(`Hola <strong>${user.name}</strong>,`),
-            emailParagraph(`Tu reserva ha cambiado de estado:`),
+            emailParagraph("Tu reserva ha cambiado de estado:"),
             emailInfoBox([
-                { label: "Servicio", value: service?.title || "Clase de Surf" },
+                { label: "Servicio", value: booking.service_title || "Clase de Surf" },
                 { label: "Fecha", value: dateStr },
                 { label: "Hora", value: `${booking.time}h` },
                 { label: "Nuevo estado", value: statusLabel },
@@ -261,9 +215,6 @@ export async function notifyBookingStatusChange(
     }
 }
 
-/**
- * 5. Class assignment — sent to the instructor
- */
 export async function notifyClassAssignment(
     instructorId: string,
     classDetails: { classId: string; date: string; time: string; level?: string; serviceName?: string }
@@ -276,7 +227,6 @@ export async function notifyClassAssignment(
             weekday: "long", day: "numeric", month: "long",
         });
 
-        // In-app
         await saveNotification({
             user_id: instructorId,
             type: "CLASS_ASSIGNED",
@@ -285,15 +235,12 @@ export async function notifyClassAssignment(
             link: "/instructor/asignaciones",
         });
 
-        // Email
         const infoItems = [
             { label: "Servicio", value: classDetails.serviceName || "Clase de Surf" },
             { label: "Fecha", value: dateStr },
             { label: "Hora", value: `${classDetails.time}h` },
         ];
-        if (classDetails.level) {
-            infoItems.push({ label: "Nivel", value: classDetails.level });
-        }
+        if (classDetails.level) infoItems.push({ label: "Nivel", value: classDetails.level });
 
         const body = [
             emailHeading("Nueva clase asignada 📌"),
@@ -310,9 +257,6 @@ export async function notifyClassAssignment(
     }
 }
 
-/**
- * 6. Assignment response — sent to admins when instructor accepts/rejects
- */
 export async function notifyAssignmentResponse(
     instructorId: string,
     classId: string,
@@ -322,14 +266,13 @@ export async function notifyAssignmentResponse(
         const instructor = await getUserInfo(instructorId);
         if (!instructor) return;
 
-        const adminClient = getAdmin();
-        const { data: cls } = await adminClient
-            .from("classes")
-            .select("date, time, service:service_id(title)")
-            .eq("id", classId)
-            .single();
-
-        const service = cls?.service ? (Array.isArray(cls.service) ? cls.service[0] : cls.service) : null;
+        const clsResult = await pool.query(
+            `SELECT c.date, c.time, s.title as service_title
+             FROM classes c LEFT JOIN services s ON s.id = c.service_id
+             WHERE c.id = $1`,
+            [classId]
+        );
+        const cls = clsResult.rows[0];
         const dateStr = cls?.date
             ? new Date(cls.date).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })
             : "—";
@@ -344,7 +287,7 @@ export async function notifyAssignmentResponse(
                 user_id: admin.id,
                 type: "ASSIGNMENT_RESPONSE",
                 title: `Monitor ha ${statusText} la asignación`,
-                message: `${instructor.name} ha ${statusText} la clase de ${service?.title || "surf"} del ${dateStr}.`,
+                message: `${instructor.name} ha ${statusText} la clase de ${cls?.service_title || "surf"} del ${dateStr}.`,
                 link: "/admin/classes",
             });
         }
@@ -354,7 +297,7 @@ export async function notifyAssignmentResponse(
             emailParagraph(`<strong>${instructor.name}</strong> ha <strong>${statusText}</strong> la asignación:`),
             emailInfoBox([
                 { label: "Monitor", value: instructor.name },
-                { label: "Servicio", value: service?.title || "Clase de Surf" },
+                { label: "Servicio", value: cls?.service_title || "Clase de Surf" },
                 { label: "Fecha", value: dateStr },
                 { label: "Hora", value: cls?.time ? `${cls.time}h` : "—" },
                 { label: "Respuesta", value: isAccepted ? "✅ Aceptada" : "❌ Rechazada" },
@@ -370,51 +313,39 @@ export async function notifyAssignmentResponse(
     }
 }
 
-/**
- * 7. Class cancelled — sent to all booked students + assigned instructors
- */
 export async function notifyClassCancelled(classId: string) {
     try {
-        const adminClient = getAdmin();
+        const clsResult = await pool.query(
+            `SELECT c.date, c.time, s.title as service_title
+             FROM classes c LEFT JOIN services s ON s.id = c.service_id
+             WHERE c.id = $1`,
+            [classId]
+        );
+        if (clsResult.rows.length === 0) return;
+        const cls = clsResult.rows[0];
 
-        // Get class details
-        const { data: cls } = await adminClient
-            .from("classes")
-            .select("date, time, service:service_id(title)")
-            .eq("id", classId)
-            .single();
-
-        if (!cls) return;
-
-        const service = cls.service ? (Array.isArray(cls.service) ? cls.service[0] : cls.service) : null;
         const dateStr = new Date(cls.date).toLocaleDateString("es-ES", {
             weekday: "long", day: "numeric", month: "long",
         });
 
-        // Get booked students
-        const { data: bookings } = await adminClient
-            .from("bookings")
-            .select("user_id")
-            .eq("class_id", classId)
-            .neq("status", "CANCELLED");
+        const bookingsResult = await pool.query(
+            `SELECT DISTINCT user_id FROM bookings WHERE class_id = $1 AND status != 'CANCELLED'`,
+            [classId]
+        );
+        const assignmentsResult = await pool.query(
+            `SELECT DISTINCT instructor_id FROM class_instructors WHERE class_id = $1`,
+            [classId]
+        );
 
-        const studentIds = [...new Set((bookings || []).map(b => b.user_id))];
-
-        // Get assigned instructors
-        const { data: assignments } = await adminClient
-            .from("class_instructors")
-            .select("instructor_id")
-            .eq("class_id", classId);
-
-        const instructorIds = [...new Set((assignments || []).map(a => a.instructor_id))];
-
+        const studentIds = bookingsResult.rows.map((r: any) => r.user_id);
+        const instructorIds = assignmentsResult.rows.map((r: any) => r.instructor_id);
         const allUserIds = [...new Set([...studentIds, ...instructorIds])];
 
         const emailBody = [
             emailHeading("Clase cancelada ❌"),
             emailParagraph("Lamentamos informarte de que la siguiente clase ha sido cancelada:"),
             emailInfoBox([
-                { label: "Servicio", value: service?.title || "Clase de Surf" },
+                { label: "Servicio", value: cls.service_title || "Clase de Surf" },
                 { label: "Fecha", value: dateStr },
                 { label: "Hora", value: `${cls.time}h` },
                 { label: "Estado", value: "❌ Cancelada" },
@@ -428,16 +359,14 @@ export async function notifyClassCancelled(classId: string) {
             const user = await getUserInfo(uid);
             if (!user) continue;
 
-            // In-app
             await saveNotification({
                 user_id: uid,
                 type: "CLASS_CANCELLED",
                 title: "Clase cancelada",
-                message: `La clase de ${service?.title || "surf"} del ${dateStr} a las ${cls.time}h ha sido cancelada.`,
+                message: `La clase de ${cls.service_title || "surf"} del ${dateStr} a las ${cls.time}h ha sido cancelada.`,
                 link: user.role === "STUDENT" ? "/area-privada/mis-reservas" : "/instructor/clases",
             });
 
-            // Email
             await sendEmail(user.email, "❌ Clase cancelada — TGN Surf School", emailBody);
         }
     } catch (err) {
@@ -445,14 +374,7 @@ export async function notifyClassCancelled(classId: string) {
     }
 }
 
-/**
- * 8. Pass purchase confirmation — sent to student + admins
- */
-export async function notifyPassPurchase(
-    userId: string,
-    passType: string,
-    classes: number
-) {
+export async function notifyPassPurchase(userId: string, passType: string, classes: number) {
     try {
         const user = await getUserInfo(userId);
         if (!user) return;
@@ -462,10 +384,8 @@ export async function notifyPassPurchase(
             BONO_5: "Bono 5 Clases",
             BONO_10: "Bono 10 Clases",
         };
-
         const passLabel = passLabels[passType] || passType;
 
-        // In-app (student)
         await saveNotification({
             user_id: userId,
             type: "PASS_PURCHASED",
@@ -474,7 +394,6 @@ export async function notifyPassPurchase(
             link: "/area-privada/bonos",
         });
 
-        // Email (student)
         const studentBody = [
             emailHeading("¡Bono activado! 🎉"),
             emailParagraph(`Hola <strong>${user.name}</strong>,`),
@@ -489,7 +408,6 @@ export async function notifyPassPurchase(
 
         await sendEmail(user.email, "🎉 Bono activado — TGN Surf School", studentBody);
 
-        // Admin notification
         const admins = await getAdminUsers();
         const adminBody = [
             emailHeading("Nuevo bono comprado 💰"),

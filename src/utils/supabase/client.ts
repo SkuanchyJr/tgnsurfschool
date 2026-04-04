@@ -1,8 +1,3 @@
-import { createBrowserClient } from '@supabase/ssr'
-
-export function createClient() {
-    return createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-}
+// Supabase client has been removed. Auth is now handled server-side via iron-session.
+// This file is kept to prevent import errors during transition.
+export {};

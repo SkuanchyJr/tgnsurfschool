@@ -1,5 +1,5 @@
 import { getMyAssignedClasses } from "../actions";
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
 import AssignmentListClient from "../AssignmentListClient";
 import { CalendarDays } from "lucide-react";
@@ -7,8 +7,7 @@ import { CalendarDays } from "lucide-react";
 export const metadata = { title: "Mis Clases | TGN Surf Monitor" };
 
 export default async function InstructorClasesPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const assignments = await getMyAssignedClasses();

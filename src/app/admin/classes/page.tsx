@@ -1,31 +1,21 @@
 import { getClasses, getAllInstructors } from "../actions";
-import { createClient } from "@supabase/supabase-js";
+import pool from "@/lib/db";
 import ClassManagerClient from "./ClassManagerClient";
 import { CalendarDays } from "lucide-react";
 
 export const metadata = { title: "Clases | Admin TGN Surf" };
 
 export default async function AdminClassesPage() {
-    const [classes, instructors] = await Promise.all([
+    const [classes, instructors, servicesResult] = await Promise.all([
         getClasses(),
         getAllInstructors(),
+        pool.query(`SELECT id, title, type FROM services WHERE is_active = true ORDER BY type`),
     ]);
-
-    // Fetch active services for the class form modal dropdown
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-    const { data: services } = await supabase
-        .from("services")
-        .select("id, title, type")
-        .eq("is_active", true)
-        .order("type");
 
     return (
         <ClassManagerClient
             initialClasses={classes}
-            services={services || []}
+            services={servicesResult.rows}
             instructors={instructors as any[]}
         />
     );

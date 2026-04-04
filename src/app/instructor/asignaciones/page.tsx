@@ -1,5 +1,5 @@
 import { getMyAssignedClasses } from "../actions";
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
 import AssignmentListClient from "../AssignmentListClient";
 import { ClipboardList } from "lucide-react";
@@ -7,8 +7,7 @@ import { ClipboardList } from "lucide-react";
 export const metadata = { title: "Asignaciones Pendientes | TGN Surf Monitor" };
 
 export default async function InstructorAsignacionesPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const all = await getMyAssignedClasses();

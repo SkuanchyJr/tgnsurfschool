@@ -1,6 +1,6 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
 import { StudentProgressCard } from "../components/StudentProgressCard";
 import { EnrichedHistory } from "../components/EnrichedHistory";
 
@@ -17,30 +17,36 @@ const LEVEL_CFG: Record<string, { label: string; emoji: string; color: string; b
 };
 
 export default async function ProgresoPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
     const today = new Date().toISOString().split("T")[0];
 
     // Fetch user surf level
-    const { data: profile } = await supabaseAdmin
-        .from("users")
-        .select("surf_level")
-        .eq("id", user.id)
-        .single();
-
-    const surfLevel: string = (profile as any)?.surf_level || "BEGINNER";
+    const profileResult = await pool.query(
+        `SELECT surf_level FROM users WHERE id = $1`,
+        [user.id]
+    );
+    const surfLevel: string = profileResult.rows[0]?.surf_level || "BEGINNER";
     const lv = LEVEL_CFG[surfLevel] || LEVEL_CFG.BEGINNER;
 
     // Fetch past bookings for history and progress count
-    const { data: pastBookings } = await supabaseAdmin
-        .from("bookings")
-        .select(`id, date, time, pax, status, class_id, services:service_id (title, type), class:class_id (level)`)
-        .eq("user_id", user.id)
-        .lte("date", today)
-        .order("date", { ascending: false })
-        .order("time", { ascending: false });
+    const pastResult = await pool.query(
+        `SELECT b.id, b.date, b.time, b.pax, b.status, b.class_id,
+                s.title as service_title, s.type as service_type,
+                c.level as class_level
+         FROM bookings b
+         LEFT JOIN services s ON s.id = b.service_id
+         LEFT JOIN classes c ON c.id = b.class_id
+         WHERE b.user_id = $1 AND b.date <= $2
+         ORDER BY b.date DESC, b.time DESC`,
+        [user.id, today]
+    );
+    const pastBookings = pastResult.rows.map((b: any) => ({
+        ...b,
+        services: { title: b.service_title, type: b.service_type },
+        class: { level: b.class_level },
+    }));
 
     const completedClasses = (pastBookings || []).filter((b: any) => b.status === "COMPLETED");
     const completedClassesCount = completedClasses.length;

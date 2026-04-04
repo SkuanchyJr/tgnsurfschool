@@ -1,6 +1,6 @@
-import { createClient } from "@/utils/supabase/server";
+import { getUser } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import pool from "@/lib/db";
 import { StudentProfileSummary } from "../components/StudentProfileSummary";
 import { ActivePassCard } from "../components/ActivePassCard";
 import { DocumentStatusCard } from "../components/DocumentStatusCard";
@@ -32,21 +32,18 @@ const LEVEL_CFG: Record<string, { label: string; emoji: string; color: string; b
 };
 
 export default async function PerfilPage() {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getUser();
     if (!user) return redirect("/login");
 
-    const userName = user.email?.split("@")[0] || "Alumno";
+    const profileResult = await pool.query(
+        `SELECT surf_level, surf_assessment, name FROM users WHERE id = $1`,
+        [user.id]
+    );
+    const profile = profileResult.rows[0] || {};
 
-    const { data: profile } = await supabaseAdmin
-        .from("users")
-        .select("surf_level, surf_assessment, name")
-        .eq("id", user.id)
-        .single();
-
-    const surfLevel: string = (profile as any)?.surf_level || "BEGINNER";
-    const surfAssessment: Record<string, string> | null = (profile as any)?.surf_assessment || null;
-    const displayName = (profile as any)?.name || userName;
+    const surfLevel: string = profile.surf_level || "BEGINNER";
+    const surfAssessment: Record<string, string> | null = profile.surf_assessment || null;
+    const displayName = profile.name || user.name || "Alumno";
     const lv = LEVEL_CFG[surfLevel] || LEVEL_CFG.BEGINNER;
 
     const documents = await getStudentDocuments();
