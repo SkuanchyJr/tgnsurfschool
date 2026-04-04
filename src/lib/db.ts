@@ -1,4 +1,11 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+// Return DATE columns as plain YYYY-MM-DD strings instead of Date objects
+types.setTypeParser(1082, (val: string) => val);
+
+// Return TIMESTAMP / TIMESTAMPTZ columns as ISO strings instead of Date objects
+types.setTypeParser(1114, (val: string) => val);
+types.setTypeParser(1184, (val: string) => val);
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
