@@ -42,9 +42,9 @@ localPort = 5002
 externalPort = 3001
 
 [deployment]
-build = ["npm", "run", "build"]
-run = ["node", "node_modules/next/dist/bin/next", "start", "-p", "5000", "-H", "0.0.0.0"]
-deploymentTarget = "autoscale"
+build = ["sh", "-c", "npm run build"]
+run = ["sh", "-c", "node node_modules/next/dist/bin/next start -p 5000 -H 0.0.0.0"]
+deploymentTarget = "cloudrun"
 
 [userenv]
 
