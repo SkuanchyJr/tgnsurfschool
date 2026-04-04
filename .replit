@@ -34,6 +34,12 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-build = ["npm", "run", "build"]
-run = ["npm", "run", "start"]
+build = ["sh", "build.sh"]
+run = ["node", ".next/standalone/server.js"]
 deploymentTarget = "autoscale"
+
+[userenv]
+
+[userenv.shared]
+PORT = "5000"
+HOSTNAME = "0.0.0.0"
