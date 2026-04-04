@@ -1,53 +1,55 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { getIronSession } from 'iron-session'
+import { unsealData } from 'iron-session'
 import type { AppSession } from '@/lib/session'
 
-const sessionOptions = {
-    password: process.env.SESSION_SECRET || 'fallback-secret-at-least-32-chars-long!!',
-    cookieName: 'tgn_session',
-    cookieOptions: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'lax' as const,
-    },
-};
+const sessionPassword = process.env.SESSION_SECRET || 'fallback-secret-at-least-32-chars-long!!'
+const cookieName = 'tgn_session'
+
+async function getSessionFromRequest(request: NextRequest): Promise<AppSession['user'] | null> {
+    try {
+        const cookieValue = request.cookies.get(cookieName)?.value
+        if (!cookieValue) return null
+        const session = await unsealData<AppSession>(cookieValue, { password: sessionPassword })
+        return session.user ?? null
+    } catch {
+        return null
+    }
+}
 
 export async function middleware(request: NextRequest) {
-    const response = NextResponse.next({ request });
+    const response = NextResponse.next({ request })
+    const user = await getSessionFromRequest(request)
 
-    const session = await getIronSession<AppSession>(request.cookies, sessionOptions);
-    const user = session.user ?? null;
+    const { pathname } = request.nextUrl
 
-    const { pathname } = request.nextUrl;
-
-    const isStudentProtectedRoute = pathname.startsWith('/area-privada') || pathname.startsWith('/webcam');
-    const isAdminRoute = pathname.startsWith('/admin');
-    const isInstructorRoute = pathname.startsWith('/instructor');
-    const isRoleRestrictedRoute = isAdminRoute || isInstructorRoute;
-    const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/registro');
+    const isStudentProtectedRoute = pathname.startsWith('/area-privada') || pathname.startsWith('/webcam')
+    const isAdminRoute = pathname.startsWith('/admin')
+    const isInstructorRoute = pathname.startsWith('/instructor')
+    const isRoleRestrictedRoute = isAdminRoute || isInstructorRoute
+    const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/registro')
 
     if (!user && (isStudentProtectedRoute || isRoleRestrictedRoute)) {
-        const loginUrl = request.nextUrl.clone();
-        loginUrl.pathname = '/login';
-        return NextResponse.redirect(loginUrl);
+        const loginUrl = request.nextUrl.clone()
+        loginUrl.pathname = '/login'
+        return NextResponse.redirect(loginUrl)
     }
 
     if (user && isRoleRestrictedRoute) {
-        const allowedRoles = ['ADMIN', 'INSTRUCTOR'];
+        const allowedRoles = ['ADMIN', 'INSTRUCTOR']
         if (!allowedRoles.includes(user.role)) {
-            const redirectUrl = request.nextUrl.clone();
-            redirectUrl.pathname = '/area-privada';
-            return NextResponse.redirect(redirectUrl);
+            const redirectUrl = request.nextUrl.clone()
+            redirectUrl.pathname = '/area-privada'
+            return NextResponse.redirect(redirectUrl)
         }
     }
 
     if (user && isAuthRoute) {
-        const dashboardUrl = request.nextUrl.clone();
-        dashboardUrl.pathname = '/area-privada';
-        return NextResponse.redirect(dashboardUrl);
+        const dashboardUrl = request.nextUrl.clone()
+        dashboardUrl.pathname = '/area-privada'
+        return NextResponse.redirect(dashboardUrl)
     }
 
-    return response;
+    return response
 }
 
 export const config = {

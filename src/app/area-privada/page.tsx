@@ -231,7 +231,7 @@ export default async function AreaPrivadaPage() {
                         ) : (
                             <div className="divide-y divide-gray-100 flex-1">
                                 {(generalAvailableClasses as any[]).map(cls => {
-                                    const remaining = cls.max_capacity - (paxByClass[cls.id] || 0);
+                                    const remaining = cls.spots_left ?? 0;
                                     const instructor = cls.class_instructors?.find((i: any) => i.status === "ACCEPTED" || i.status === "ASSIGNED");
                                     return (
                                         <div key={cls.id} className="flex flex-col sm:flex-row sm:items-center gap-3 px-6 py-4 hover:bg-slate-50 transition-colors">
