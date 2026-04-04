@@ -33,9 +33,17 @@ outputType = "webview"
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 5001
+externalPort = 3000
+
+[[ports]]
+localPort = 5002
+externalPort = 3001
+
 [deployment]
-build = ["sh", "build.sh"]
-run = ["node", ".next/standalone/server.js"]
+build = ["npm", "run", "build"]
+run = ["node", "node_modules/next/dist/bin/next", "start", "-p", "5000", "-H", "0.0.0.0"]
 deploymentTarget = "autoscale"
 
 [userenv]
