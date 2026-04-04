@@ -32,10 +32,6 @@ export async function loginAction(formData: FormData) {
             return { error: "Email o contraseña incorrectos" };
         }
 
-        if (!user.email_verified) {
-            return { error: "Debes confirmar tu email antes de iniciar sesión. Revisa tu bandeja de entrada." };
-        }
-
         const session = await getSession();
         session.user = {
             id: user.id,

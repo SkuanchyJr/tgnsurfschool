@@ -1,8 +1,24 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// ─────────────────────────────────────────────
+// Singleton SMTP Transporter
+// ─────────────────────────────────────────────
+let transporter: nodemailer.Transporter | null = null;
 
-const FROM_ADDRESS = process.env.EMAIL_FROM || "TGN Surf School <onboarding@resend.dev>";
+function getTransporter() {
+    if (!transporter) {
+        transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: Number(process.env.SMTP_PORT) || 587,
+            secure: false,
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS,
+            },
+        });
+    }
+    return transporter;
+}
 
 // ─────────────────────────────────────────────
 // HTML Email Template Wrapper
@@ -91,7 +107,7 @@ export function emailDivider(): string {
 }
 
 // ─────────────────────────────────────────────
-// Core send function — uses Resend API
+// Core send function — SMTP via nodemailer
 // ─────────────────────────────────────────────
 export async function sendEmail(
     to: string,
@@ -99,16 +115,13 @@ export async function sendEmail(
     bodyHtml: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        const { error } = await resend.emails.send({
-            from: FROM_ADDRESS,
+        const transport = getTransporter();
+        await transport.sendMail({
+            from: process.env.SMTP_FROM || "TGN Surf School <info@tgnsurfschool.com>",
             to,
             subject,
             html: emailTemplate(bodyHtml),
         });
-        if (error) {
-            console.error("[sendEmail] Resend error:", error);
-            return { success: false, error: error.message };
-        }
         return { success: true };
     } catch (err: any) {
         console.error("[sendEmail] Error:", err.message);

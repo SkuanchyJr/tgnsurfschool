@@ -109,7 +109,6 @@ export default function RegisterForm() {
     const [showConfirm, setShowConfirm] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [email, setEmail] = useState("");
@@ -132,7 +131,6 @@ export default function RegisterForm() {
 
     function handleSubmit() {
         setError(null);
-        setSuccess(null);
         const formData = new FormData();
         formData.set("email", email);
         formData.set("password", password);
@@ -142,25 +140,8 @@ export default function RegisterForm() {
             if (result?.error) {
                 setError(result.error);
                 setStep(1);
-            } else if (result?.success) {
-                setSuccess(result.success);
             }
         });
-    }
-
-    // ── Success screen ──────────────────────────────────────────────────────────
-    if (success) {
-        return (
-            <div className="text-center py-4 space-y-4 animate-fade-in-up">
-                <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto">
-                    <CheckCircle size={32} className="text-emerald-500" />
-                </div>
-                <div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-1">¡Cuenta creada!</h3>
-                    <p className="text-sm text-gray-500">{success}</p>
-                </div>
-            </div>
-        );
     }
 
     // ── Step indicator ──────────────────────────────────────────────────────────

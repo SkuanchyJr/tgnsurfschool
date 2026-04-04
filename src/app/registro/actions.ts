@@ -1,10 +1,10 @@
 "use server";
 
 import bcrypt from "bcryptjs";
-import { randomBytes } from "crypto";
+import { redirect } from "next/navigation";
 import pool from "@/lib/db";
+import { getSession } from "@/lib/session";
 import { notifyWelcome } from "@/lib/notifications";
-import { sendEmail, emailHeading, emailParagraph, emailButton } from "@/lib/email";
 
 function computeLevel(answers: Record<string, string>): string {
     let score = 0;
@@ -27,7 +27,6 @@ function computeLevel(answers: Record<string, string>): string {
 }
 
 export async function registerAction(formData: FormData) {
-    const origin = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:5000";
     const email = (formData.get("email") as string)?.toLowerCase().trim();
     const password = formData.get("password") as string;
     const answersRaw = formData.get("answers") as string | null;
@@ -50,36 +49,33 @@ export async function registerAction(formData: FormData) {
         }
 
         const password_hash = await bcrypt.hash(password, 12);
-        const verification_token = randomBytes(32).toString("hex");
-        const token_expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
 
         const result = await client.query(
-            `INSERT INTO users (email, password_hash, name, role, surf_level, surf_assessment, email_verified, verification_token, verification_token_expires)
-             VALUES ($1, $2, $3, 'STUDENT', $4, $5, false, $6, $7)
-             RETURNING id`,
-            [email, password_hash, name, surf_level, Object.keys(answers).length > 0 ? JSON.stringify(answers) : null, verification_token, token_expires]
+            `INSERT INTO users (email, password_hash, name, role, surf_level, surf_assessment, email_verified)
+             VALUES ($1, $2, $3, 'STUDENT', $4, $5, true)
+             RETURNING id, email, name, role`,
+            [email, password_hash, name, surf_level, Object.keys(answers).length > 0 ? JSON.stringify(answers) : null]
         );
 
-        const userId = result.rows[0].id;
+        const user = result.rows[0];
 
-        const verifyUrl = `${origin}/auth/callback?token=${verification_token}`;
-        const emailBody = [
-            emailHeading("Confirma tu cuenta 📧"),
-            emailParagraph(`Hola <strong>${name}</strong>,`),
-            emailParagraph("Haz clic en el botón para verificar tu dirección de email y activar tu cuenta:"),
-            emailButton("Verificar mi cuenta", verifyUrl),
-            emailParagraph("Si no has creado una cuenta, puedes ignorar este mensaje."),
-        ].join("");
+        const session = await getSession();
+        session.user = {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            emailVerified: true,
+        };
+        await session.save();
 
-        await sendEmail(email, "Verifica tu cuenta — TGN Surf School", emailBody);
-
-        notifyWelcome(userId, email, name).catch(console.error);
-
-        return { success: "Hemos enviado un email de confirmación a tu correo. Revisa tu bandeja de entrada (y spam) para activar tu cuenta." };
+        notifyWelcome(user.id, user.email, user.name).catch(console.error);
     } catch (e: any) {
         console.error("[registro] Error:", e);
         return { error: "No se pudo crear la cuenta. Inténtalo de nuevo." };
     } finally {
         client.release();
     }
+
+    redirect("/area-privada");
 }
