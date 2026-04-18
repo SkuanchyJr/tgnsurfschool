@@ -16,7 +16,7 @@ async function getSessionFromRequest(request: NextRequest): Promise<AppSession['
     }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const response = NextResponse.next({ request })
     const user = await getSessionFromRequest(request)
 

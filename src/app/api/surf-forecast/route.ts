@@ -4,7 +4,7 @@ import OpenAI from 'openai';
 // Initialize the OpenAI client. 
 // It automatically uses the OPENAI_API_KEY environment variable.
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || 'dummy_key', // Providing a fallback so it doesn't crash on build if key is missing
+    apiKey: process.env.OPENAI_API_KEY || 'OPENAI_DUMMY_KEY',
 });
 
 export async function GET() {
@@ -22,7 +22,7 @@ export async function GET() {
         };
 
         // Si no hay API key real configurada, devolvemos un mock para que la UI no se rompa
-        if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'dummy_key') {
+        if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.includes('dummy')) {
             return NextResponse.json({
                 success: true,
                 data: {
