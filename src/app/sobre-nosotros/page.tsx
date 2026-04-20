@@ -12,7 +12,7 @@ export default function SobreNosotros() {
         <div className="pt-24 min-h-screen bg-white">
             {/* HEADER SECTION */}
             <section className="relative py-20 bg-[#111827] overflow-hidden">
-                <div className="absolute inset-0 opacity-20 bg-[url('https://images.unsplash.com/photo-1544414603-fc01db8c2274?auto=format&fit=crop&q=80')] bg-cover bg-center"></div>
+                <div className="absolute inset-0 opacity-20 bg-[url('/Copia de DJI_0882.JPG')] bg-cover bg-center"></div>
                 <div className="container mx-auto px-4 lg:px-8 relative z-10 text-center">
                     <span className="text-[#3F7FE3] font-bold tracking-widest uppercase text-sm mb-4 block">Nuestra Historia</span>
                     <h1 className="text-5xl md:text-6xl font-black text-white font-fredoka mb-6">
@@ -32,12 +32,12 @@ export default function SobreNosotros() {
                         <div className="w-full lg:w-1/2 grid grid-cols-2 gap-4 relative">
                             <div className="absolute -inset-4 bg-[#3F7FE3]/5 rounded-3xl -z-10 rotate-3"></div>
                             <img
-                                src="https://images.unsplash.com/photo-1512413919830-43d997fce5a3?q=80&w=600&auto=format&fit=crop"
+                                src="/Copia de DSC05277.jpg"
                                 alt="Eric Faura surfeando"
                                 className="w-full h-80 object-cover rounded-2xl shadow-lg mt-8"
                             />
                             <img
-                                src="https://images.unsplash.com/photo-1502680390469-be75c86b636f?q=80&w=600&auto=format&fit=crop"
+                                src="/Copia de DJI_0880.JPG"
                                 alt="Tarragona line up"
                                 className="w-full h-80 object-cover rounded-2xl shadow-lg"
                             />

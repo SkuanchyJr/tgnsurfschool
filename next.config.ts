@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   turbopack: {
-    root: ".",
+    root: "c:\\Users\\DANIEL.ANACHE\\Documents\\antigravity test\\tgnsurfschool",
   },
 } as any;
 

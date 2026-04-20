@@ -148,7 +148,7 @@ export default function ContactoPage() {
             <section className="h-96 w-full bg-gray-200 relative">
                 <div className="absolute inset-0 bg-[#111827]/10 flex items-center justify-center overflow-hidden">
                     {/* Un iframe real a Google Maps podría ir aquí, por ahora usamos un placeholder visual premium */}
-                    <div className="w-full h-full bg-[url('https://images.unsplash.com/photo-1524661135-423995f22d0b?q=80&w=2074&auto=format&fit=crop')] bg-cover bg-center opacity-60"></div>
+                    <div className="w-full h-full bg-[url('/Copia de DJI_0867.JPG')] bg-cover bg-center opacity-60"></div>
                     <div className="absolute p-6 bg-white rounded-2xl shadow-2xl flex items-center gap-4 hover:scale-105 transition-transform z-10 cursor-pointer">
                         <div className="w-12 h-12 bg-[#3F7FE3] rounded-full flex items-center justify-center animate-bounce shadow-lg">
                             <MapPin className="text-white" size={24} />

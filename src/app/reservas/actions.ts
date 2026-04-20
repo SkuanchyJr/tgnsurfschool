@@ -4,6 +4,8 @@ import pool from "@/lib/db";
 import { getUser } from "@/lib/session";
 import Stripe from "stripe";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import { type LegalData } from "./components/LegalCheckbox";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'STRIPE_DUMMY_KEY', {
     apiVersion: "2025-02-24.acacia" as any,
@@ -32,6 +34,22 @@ export type AvailableClass = {
     service_price: number | null;
     notes: string | null;
 };
+
+export async function getStudentProfile(): Promise<{ success: boolean; data?: { birthdate: string | null; dni: string | null }; error?: string }> {
+    const user = await getUser();
+    if (!user) return { success: false, error: "No autenticado" };
+
+    try {
+        const result = await pool.query(
+            `SELECT birthdate, dni FROM users WHERE id = $1`,
+            [user.id]
+        );
+        return { success: true, data: result.rows[0] };
+    } catch (e) {
+        console.error("[getStudentProfile] Error:", e);
+        return { success: false, error: "Error al cargar perfil." };
+    }
+}
 
 export async function getServices(): Promise<{ success: boolean; data?: Service[]; error?: string }> {
     try {
@@ -91,10 +109,15 @@ export async function getAvailableClasses(): Promise<{ success: boolean; data?: 
 export async function createBooking(
     classId: string,
     pax: number,
-    usePass: boolean = false
+    usePass: boolean = false,
+    legalData?: LegalData
 ): Promise<{ success: boolean; error?: string }> {
     const user = await getUser();
     if (!user) return { success: false, error: "Debes iniciar sesión para completar la reserva." };
+
+    const headerList = await headers();
+    const ip = headerList.get("x-forwarded-for") || "unknown";
+    const legalVersion = "2026-04-v1";
 
     const client = await pool.connect();
     try {
@@ -138,17 +161,63 @@ export async function createBooking(
                 [newRemaining, newRemaining === 0 ? "EXHAUSTED" : "ACTIVE", pass.id]
             );
             await client.query(
-                `INSERT INTO bookings (user_id, class_id, service_id, date, time, pax, status) VALUES ($1, $2, $3, $4, $5, $6, 'CONFIRMED')`,
-                [user.id, classId, cls.service_id, cls.date, cls.time, pax]
+                `INSERT INTO bookings (
+                    user_id, class_id, service_id, date, time, pax, status,
+                    legal_accepted_at, legal_accepted_ip, legal_version,
+                    is_minor, tutor_name, tutor_id, tutor_phone, emergency_contact
+                 ) VALUES ($1, $2, $3, $4, $5, $6, 'CONFIRMED', NOW(), $7, $8, $9, $10, $11, $12, $13)`,
+                [
+                    user.id, classId, cls.service_id, cls.date, cls.time, pax,
+                    ip, legalVersion,
+                    legalData?.isMinor || false,
+                    legalData?.tutorName || null,
+                    legalData?.tutorId || null,
+                    legalData?.tutorPhone || null,
+                    legalData?.emergencyContact || null
+                ]
             );
+
+            // Update user DNI and Birthdate if not set
+            if (legalData?.dni || legalData?.birthdate) {
+                await client.query(
+                    `UPDATE users SET 
+                        dni = COALESCE(dni, $1), 
+                        birthdate = COALESCE(birthdate, $2) 
+                     WHERE id = $3`,
+                    [legalData.dni || null, legalData.birthdate || null, user.id]
+                );
+            }
             revalidatePath("/area-privada");
             return { success: true };
         }
 
         await client.query(
-            `INSERT INTO bookings (user_id, class_id, service_id, date, time, pax, status) VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')`,
-            [user.id, classId, cls.service_id, cls.date, cls.time, pax]
+            `INSERT INTO bookings (
+                user_id, class_id, service_id, date, time, pax, status,
+                legal_accepted_at, legal_accepted_ip, legal_version,
+                is_minor, tutor_name, tutor_id, tutor_phone, emergency_contact
+             ) VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW(), $7, $8, $9, $10, $11, $12, $13)`,
+            [
+                user.id, classId, cls.service_id, cls.date, cls.time, pax,
+                ip, legalVersion,
+                legalData?.isMinor || false,
+                legalData?.tutorName || null,
+                legalData?.tutorId || null,
+                legalData?.tutorPhone || null,
+                legalData?.emergencyContact || null
+            ]
         );
+
+        // Update user DNI and Birthdate if not set
+        if (legalData?.dni || legalData?.birthdate) {
+            await client.query(
+                `UPDATE users SET 
+                    dni = COALESCE(dni, $1), 
+                    birthdate = COALESCE(birthdate, $2) 
+                 WHERE id = $3`,
+                [legalData.dni || null, legalData.birthdate || null, user.id]
+            );
+        }
         return { success: true };
     } catch (e) {
         console.error("[createBooking] Error:", e);
@@ -160,10 +229,15 @@ export async function createBooking(
 
 export async function createCheckoutSession(
     classId: string,
-    pax: number
+    pax: number,
+    legalData?: LegalData
 ): Promise<{ success: boolean; url?: string; error?: string }> {
     const user = await getUser();
     if (!user) return { success: false, error: "Debes iniciar sesión para completar la reserva." };
+
+    const headerList = await headers();
+    const ip = headerList.get("x-forwarded-for") || "unknown";
+    const legalVersion = "2026-04-v1";
 
     try {
         const clsResult = await pool.query(
@@ -207,7 +281,20 @@ export async function createCheckoutSession(
             mode: "payment",
             success_url: `${origin}/reservas/success`,
             cancel_url: `${origin}/reservas/cancel`,
-            metadata: { classId, userId: user.id, pax: pax.toString() },
+            metadata: { 
+                classId, 
+                userId: user.id, 
+                pax: pax.toString(),
+                legalIp: ip,
+                legalVersion: legalVersion,
+                legalDni: legalData?.dni || "",
+                legalBirthdate: legalData?.birthdate || "",
+                legalIsMinor: legalData?.isMinor ? "true" : "false",
+                legalTutorName: legalData?.tutorName || "",
+                legalTutorId: legalData?.tutorId || "",
+                legalTutorPhone: legalData?.tutorPhone || "",
+                legalEmergency: legalData?.emergencyContact || ""
+            },
             customer_email: user.email,
         });
 

@@ -121,3 +121,57 @@ export async function saveAssessmentAction(formData: FormData) {
         return { error: "Error al guardar la evaluación. Inténtalo de nuevo." };
     }
 }
+
+export async function saveIntakeFormAction(
+    formData: FormData
+): Promise<{ success?: boolean; error?: string }> {
+    const user = await getUser();
+    if (!user) return { error: "Debes iniciar sesión." };
+
+    const surf_frequency = formData.get("surf_frequency") as string | null;
+    const declared_level = formData.get("declared_level") as string | null;
+    const own_gear       = formData.get("own_gear")       as string | null;
+    const wetsuit_size   = formData.get("wetsuit_size")   as string | null;
+    const board_size     = formData.get("board_size")     as string | null;
+    const board_notes    = formData.get("board_notes")    as string | null;
+    const booking_id     = formData.get("booking_id")     as string | null;
+
+    if (!surf_frequency || !own_gear || !board_size) {
+        return { error: "Faltan datos obligatorios." };
+    }
+
+    try {
+        const result = await pool.query(
+            `INSERT INTO session_intake
+               (user_id, booking_id, surf_frequency, declared_level, own_gear, wetsuit_size, board_size, board_notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING id`,
+            [
+                user.id,
+                booking_id || null,
+                surf_frequency,
+                declared_level || null,
+                own_gear,
+                wetsuit_size || null,
+                board_size,
+                board_notes || null,
+            ]
+        );
+        const intakeId = result.rows[0].id;
+
+        // Link intake to booking
+        if (booking_id) {
+            await pool.query(
+                `UPDATE bookings SET intake_id = $1 WHERE id = $2 AND user_id = $3`,
+                [intakeId, booking_id, user.id]
+            );
+        }
+
+        revalidatePath("/area-privada/mis-reservas");
+        revalidatePath("/area-privada");
+        return { success: true };
+    } catch (e) {
+        console.error("[saveIntakeFormAction] Error:", e);
+        return { error: "Error al guardar el formulario. Inténtalo de nuevo." };
+    }
+}

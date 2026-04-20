@@ -72,7 +72,7 @@ export default function ProgramasPage() {
                         <div className="w-full lg:w-1/2">
                             <div className="aspect-[4/5] rounded-[2rem] overflow-hidden">
                                 <img
-                                    src="https://images.unsplash.com/photo-1596489391099-0785081c7e93?q=80&w=1000&auto=format&fit=crop"
+                                    src="/Copia de _DRE4722.jpg"
                                     alt="Niños en clase de surf"
                                     className="w-full h-full object-cover"
                                 />

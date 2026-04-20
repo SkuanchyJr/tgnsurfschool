@@ -434,3 +434,86 @@ export async function notifyPassPurchase(userId: string, passType: string, class
         console.error("[notifyPassPurchase] Error:", err);
     }
 }
+
+export async function notifySessionReminder(details: {
+    bookingId:      string;
+    userName:       string;
+    userEmail:      string;
+    userPhone?:     string;
+    classDate:      string;
+    classTime:      string;
+    location?:      string;
+    mapsUrl?:       string;
+    serviceName?:   string;
+    instructorName?: string;
+}) {
+    try {
+        const dateStr = new Date(details.classDate).toLocaleDateString("es-ES", {
+            weekday: "long", day: "numeric", month: "long",
+        });
+
+        const locationLine = details.mapsUrl
+            ? `<a href="${details.mapsUrl}" style="color:#3F7FE3;font-weight:700;">Ver ubicación en Google Maps →</a>`
+            : details.location || "Te avisaremos por WhatsApp";
+
+        const whatsappMsg = encodeURIComponent(
+            `Hola ${details.userName}, te recordamos tu sesión de surf mañana a las ${details.classTime.substring(0, 5)}h. ¡Nos vemos en el agua! 🌊`
+        );
+        const whatsappUrl = details.userPhone
+            ? `https://wa.me/${details.userPhone.replace(/\D/g, "")}?text=${whatsappMsg}`
+            : null;
+
+        const infoItems: { label: string; value: string }[] = [
+            { label: "Servicio", value: details.serviceName || "Clase de Surf" },
+            { label: "Fecha",    value: dateStr },
+            { label: "Hora",     value: `${details.classTime.substring(0, 5)}h` },
+        ];
+        if (details.instructorName) infoItems.push({ label: "Monitor", value: details.instructorName });
+        if (details.location)       infoItems.push({ label: "📍 Ubicación", value: details.location });
+
+        const body = [
+            emailHeading("Tu sesión de surf es mañana 🌊"),
+            emailParagraph(`Hola <strong>${details.userName}</strong>,`),
+            emailParagraph("Te recordamos tu próxima sesión de surf con <strong>TGN Surf School / La Pineda Surf Club</strong>."),
+            emailInfoBox(infoItems),
+            `<div style="background:#f0f7ff;border-radius:12px;border:1px solid #c7deff;padding:16px 20px;margin:16px 0;">
+                <p style="margin:0 0 8px;color:#1E3A8A;font-size:13px;font-weight:700;">📍 Cómo llegar</p>
+                <p style="margin:0;font-size:14px;color:#334155;">${locationLine}</p>
+            </div>`,
+            emailParagraph("Por favor, <strong>intenta llegar 10–15 minutos antes</strong> para preparar el material y comenzar puntuales."),
+            emailParagraph("Si hubiera algún cambio de playa o spot por condiciones del mar, te avisaremos por WhatsApp. 🌊"),
+            emailDivider(),
+            emailParagraph("¡Nos vemos en el agua! 🏄‍♂️"),
+            whatsappUrl
+                ? `<div style="text-align:center;margin:20px 0 8px;">
+                    <a href="${whatsappUrl}" style="display:inline-block;padding:12px 28px;background:#25D366;color:#fff;text-decoration:none;border-radius:12px;font-size:14px;font-weight:700;">
+                        💬 Enviar recordatorio por WhatsApp
+                    </a>
+                   </div>`
+                : "",
+        ].join("");
+
+        // In-app notification
+        const userResult = await pool.query<{ id: string }>(
+            `SELECT id FROM users WHERE email = $1`,
+            [details.userEmail]
+        );
+        if (userResult.rows[0]) {
+            await saveNotification({
+                user_id: userResult.rows[0].id,
+                type:    "SESSION_REMINDER",
+                title:   "Recordatorio: sesión de surf mañana 🌊",
+                message: `Tu clase de ${details.serviceName || "surf"} es mañana ${dateStr} a las ${details.classTime.substring(0, 5)}h.`,
+                link:    "/area-privada/mis-reservas",
+            });
+        }
+
+        await sendEmail(
+            details.userEmail,
+            `Tu sesión de surf es mañana 🌊 — ${details.serviceName || "TGN Surf School"}`,
+            body
+        );
+    } catch (err) {
+        console.error("[notifySessionReminder] Error:", err);
+    }
+}

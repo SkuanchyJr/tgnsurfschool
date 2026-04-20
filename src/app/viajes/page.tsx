@@ -11,7 +11,7 @@ export default function ViajesPage() {
         <div className="pt-24 min-h-screen bg-white">
             {/* HEADER SECTION */}
             <section className="relative py-28 bg-[#111827] overflow-hidden">
-                <div className="absolute inset-0 opacity-40 bg-[url('https://images.unsplash.com/photo-1543360216-16db49b5ae79?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center"></div>
+                <div className="absolute inset-0 opacity-40 bg-[url('/Copia de tgnsurf_gavina_-51.jpg')] bg-cover bg-center"></div>
                 <div className="absolute inset-0 bg-gradient-to-t from-[#111827] to-transparent"></div>
 
                 <div className="container mx-auto px-4 lg:px-8 relative z-10 text-center max-w-4xl">
@@ -73,7 +73,7 @@ export default function ViajesPage() {
                         <div className="relative">
                             <div className="absolute inset-0 bg-[#3F7FE3] rounded-[3rem] rotate-3 opacity-10"></div>
                             <img
-                                src="https://images.unsplash.com/photo-1515405295579-ba7b45403062?q=80&w=1000&auto=format&fit=crop"
+                                src="/Copia de _DRE4740.jpg"
                                 alt="Surf Trip furgo"
                                 className="rounded-[3rem] shadow-2xl relative z-10 w-full object-cover aspect-square"
                             />

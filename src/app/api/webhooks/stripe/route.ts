@@ -70,11 +70,34 @@ export async function POST(req: Request) {
 
                         try {
                             await pool.query(
-                                `INSERT INTO bookings (user_id, class_id, service_id, date, time, pax, status)
-                                 VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')`,
-                                [metadata.userId, metadata.classId, cls.service_id, cls.date, cls.time, pax]
+                                `INSERT INTO bookings (
+                                    user_id, class_id, service_id, date, time, pax, status,
+                                    legal_accepted_at, legal_accepted_ip, legal_version,
+                                    is_minor, tutor_name, tutor_id, tutor_phone, emergency_contact
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW(), $7, $8, $9, $10, $11, $12, $13)`,
+                                [
+                                    metadata.userId, metadata.classId, cls.service_id, cls.date, cls.time, pax,
+                                    metadata.legalIp || null,
+                                    metadata.legalVersion || null,
+                                    metadata.legalIsMinor === "true",
+                                    metadata.legalTutorName || null,
+                                    metadata.legalTutorId || null,
+                                    metadata.legalTutorPhone || null,
+                                    metadata.legalEmergency || null
+                                ]
                             );
                             console.log("Booking created from webhook for class:", metadata.classId);
+
+                            // Update user DNI and Birthdate if provided and not already set
+                            if (metadata.legalDni || metadata.legalBirthdate) {
+                                await pool.query(
+                                    `UPDATE users SET 
+                                        dni = COALESCE(dni, $1), 
+                                        birthdate = COALESCE(birthdate, $2) 
+                                     WHERE id = $3`,
+                                    [metadata.legalDni || null, metadata.legalBirthdate || null, metadata.userId]
+                                );
+                            }
 
                             let serviceName = "Clase de Surf";
                             if (cls.service_id) {

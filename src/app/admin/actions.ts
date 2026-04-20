@@ -123,7 +123,7 @@ export async function getStudentDetail(id: string) {
     const student = studentResult.rows[0];
 
     const bookingsResult = await pool.query(
-        `SELECT b.id, b.date, b.time, b.pax, b.status,
+        `SELECT b.id, b.date, b.time, b.pax, b.status, b.intake_id, b.feedback_id,
                 s.id as service_id, s.title as service_title, s.type as service_type, s.price as service_price
          FROM bookings b
          LEFT JOIN services s ON s.id = b.service_id
@@ -132,14 +132,40 @@ export async function getStudentDetail(id: string) {
         [id]
     );
 
+    // Collect IDs for batch fetch
+    const intakeIds  = bookingsResult.rows.filter((b: any) => b.intake_id).map((b: any)  => b.intake_id);
+    const feedbackIds = bookingsResult.rows.filter((b: any) => b.feedback_id).map((b: any) => b.feedback_id);
+
+    let intakesMap:   Record<string, any> = {};
+    let feedbacksMap: Record<string, any> = {};
+
+    if (intakeIds.length > 0) {
+        const iResult = await pool.query(
+            `SELECT * FROM session_intake WHERE id = ANY($1::uuid[])`,
+            [intakeIds]
+        );
+        for (const row of iResult.rows) intakesMap[row.id] = row;
+    }
+
+    if (feedbackIds.length > 0) {
+        const fResult = await pool.query(
+            `SELECT * FROM session_feedback WHERE id = ANY($1::uuid[])`,
+            [feedbackIds]
+        );
+        for (const row of fResult.rows) feedbacksMap[row.id] = row;
+    }
+
     return {
         ...student,
         bookings: bookingsResult.rows.map((b: any) => ({
             ...b,
             services: { id: b.service_id, title: b.service_title, type: b.service_type, price: b.service_price },
+            intake:   b.intake_id   ? intakesMap[b.intake_id]   ?? null : null,
+            feedback: b.feedback_id ? feedbacksMap[b.feedback_id] ?? null : null,
         })),
     };
 }
+
 
 export async function createService(serviceData: {
     title: string; type: string; description: string | null; price: number;
@@ -513,4 +539,105 @@ export async function mergeClasses(
     } finally {
         client.release();
     }
+}
+
+export type CampaignFilters = {
+    levels?: string[];               // BEGINNER, INITIATION, INTERMEDIATE, ADVANCED
+    hasActiveVouchers?: boolean;
+    lastSessionBefore?: string;      // ISO date — inactive users
+    preferredBeach?: string;
+    marketingConsentOnly?: boolean;
+};
+
+export async function sendSegmentedCampaign(
+    filters: CampaignFilters,
+    subject: string,
+    htmlBody: string
+): Promise<{ success: boolean; sent: number; total: number; error?: string }> {
+    const { hasAccess } = await verifyAdminAccess();
+    if (!hasAccess) return { success: false, sent: 0, total: 0, error: "Acceso denegado" };
+
+    try {
+        const conditions: string[] = [`u.role = 'STUDENT'`];
+        const params: any[]         = [];
+        let idx = 1;
+
+        if (filters.marketingConsentOnly) {
+            conditions.push(`u.marketing_consent = true`);
+        }
+        if (filters.levels && filters.levels.length > 0) {
+            conditions.push(`u.surf_level = ANY($${idx++}::text[])`);
+            params.push(filters.levels);
+        }
+        if (filters.preferredBeach) {
+            conditions.push(`u.preferred_beach = $${idx++}`);
+            params.push(filters.preferredBeach);
+        }
+        if (filters.lastSessionBefore) {
+            conditions.push(`(u.last_session_date IS NULL OR u.last_session_date < $${idx++})`);
+            params.push(filters.lastSessionBefore);
+        }
+        if (filters.hasActiveVouchers) {
+            conditions.push(
+                `EXISTS (SELECT 1 FROM vouchers v WHERE v.user_id = u.id AND v.remaining_classes > 0)`
+            );
+        }
+
+        const where = conditions.join(" AND ");
+        const result = await pool.query<{ id: string; name: string; email: string }>(
+            `SELECT u.id, u.name, u.email FROM users u WHERE ${where} ORDER BY u.name ASC`,
+            params
+        );
+
+        const users = result.rows;
+        if (users.length === 0) {
+            return { success: true, sent: 0, total: 0 };
+        }
+
+        const { sendEmail } = await import("@/lib/email");
+
+        let sent = 0;
+        for (const u of users) {
+            // Personalise greeting
+            const personalBody = htmlBody.replace(/\[Nombre\]/g, u.name);
+            const res = await sendEmail(u.email, subject, personalBody);
+            if (res.success) sent++;
+        }
+
+        return { success: true, sent, total: users.length };
+    } catch (e: any) {
+        console.error("[sendSegmentedCampaign] Error:", e);
+        return { success: false, sent: 0, total: 0, error: e.message };
+    }
+}
+
+export async function getStudentsSegmented(filters: CampaignFilters) {
+    const { hasAccess } = await verifyAdminAccess();
+    if (!hasAccess) throw new Error("Acceso denegado");
+
+    const conditions: string[] = [`u.role = 'STUDENT'`];
+    const params: any[]         = [];
+    let idx = 1;
+
+    if (filters.marketingConsentOnly) conditions.push(`u.marketing_consent = true`);
+    if (filters.levels && filters.levels.length > 0) {
+        conditions.push(`u.surf_level = ANY($${idx++}::text[])`);
+        params.push(filters.levels);
+    }
+    if (filters.preferredBeach) {
+        conditions.push(`u.preferred_beach = $${idx++}`);
+        params.push(filters.preferredBeach);
+    }
+    if (filters.lastSessionBefore) {
+        conditions.push(`(u.last_session_date IS NULL OR u.last_session_date < $${idx++})`);
+        params.push(filters.lastSessionBefore);
+    }
+
+    const where = conditions.join(" AND ");
+    const result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.phone, u.surf_level, u.last_session_date, u.preferred_beach
+         FROM users u WHERE ${where} ORDER BY u.name ASC`,
+        params
+    );
+    return result.rows;
 }

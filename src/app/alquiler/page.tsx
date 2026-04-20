@@ -29,7 +29,7 @@ export default function AlquilerPage() {
                         <div className="bg-white rounded-[2rem] overflow-hidden shadow-xl border border-transparent hover:border-[#3F7FE3]/20 transition-all flex flex-col group">
                             <div className="h-64 overflow-hidden">
                                 <img
-                                    src="https://images.unsplash.com/photo-1531722569936-825d3dd91b15?q=80&w=800&auto=format&fit=crop"
+                                    src="/Copia de DSC05234.jpg"
                                     alt="Tablas de surf"
                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                                 />
@@ -50,7 +50,7 @@ export default function AlquilerPage() {
                         <div className="bg-white rounded-[2rem] overflow-hidden shadow-xl border border-transparent hover:border-[#3F7FE3]/20 transition-all flex flex-col group">
                             <div className="h-64 overflow-hidden">
                                 <img
-                                    src="https://images.unsplash.com/photo-1544414603-fc01db8c2274?q=80&w=800&auto=format&fit=crop"
+                                    src="/Copia de DSC03283.jpg"
                                     alt="Neoprenos"
                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                                 />

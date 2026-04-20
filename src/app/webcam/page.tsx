@@ -28,7 +28,7 @@ export default function WebcamPage() {
                     <div className="bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/10 aspect-video relative group flex items-center justify-center">
 
                         {/* Mockup de Imagen de Webcam */}
-                        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1544414603-fc01db8c2274?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-80 mix-blend-luminosity brightness-75 filter blur-[2px]"></div>
+                        <div className="absolute inset-0 bg-[url('/Copia de DJI_0880.JPG')] bg-cover bg-center opacity-80 mix-blend-luminosity brightness-75 filter blur-[2px]"></div>
 
                         {/* Paywall / Socio overlay arquitectónico */}
                         <div className="relative z-10 bg-[#111827]/80 backdrop-blur-xl p-10 md:p-16 rounded-[2rem] max-w-xl text-center border border-white/10 shadow-2xl m-4 transform transition-transform group-hover:scale-105 duration-500">

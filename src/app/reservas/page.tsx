@@ -10,9 +10,11 @@ import {
 } from "lucide-react";
 import {
     getAvailableClasses, createCheckoutSession, createBooking,
+    getStudentProfile,
     type AvailableClass,
 } from "./actions";
 import { getStudentPasses, type UserPass } from "../area-privada/bonos/actions";
+import LegalCheckbox, { type LegalData } from "./components/LegalCheckbox";
 
 const LEVEL_LABELS: Record<string, { label: string; color: string }> = {
     BEGINNER: { label: "Principiante", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -60,6 +62,11 @@ export default function ReservasPage() {
     const [passes, setPasses] = useState<UserPass[]>([]);
     const [usePass, setUsePass] = useState(false);
 
+    // Legal & Profile
+    const [userProfile, setUserProfile] = useState<{ birthdate: string | null; dni: string | null } | null>(null);
+    const [acceptedLegal, setAcceptedLegal] = useState(false);
+    const [legalData, setLegalData] = useState<LegalData | null>(null);
+
     const activePass = useMemo(() => {
         return passes.find(p => p.remaining_classes >= pax);
     }, [passes, pax]);
@@ -87,6 +94,14 @@ export default function ReservasPage() {
             }
         }
         fetchPasses();
+
+        async function fetchProfile() {
+            const res = await getStudentProfile();
+            if (res.success && res.data) {
+                setUserProfile(res.data);
+            }
+        }
+        fetchProfile();
     }, [pax]);
 
     // ─── Derived data ───
@@ -118,11 +133,30 @@ export default function ReservasPage() {
 
     const handleBooking = async () => {
         if (!selectedClassId) return;
+        
+        // Validation: Legal must be accepted
+        if (!acceptedLegal) {
+            setErrorMsg("Debes aceptar las condiciones legales para continuar.");
+            return;
+        }
+
+        // Validation: DNI and Birthdate are mandatory
+        if (!legalData?.dni || !legalData?.birthdate) {
+            setErrorMsg("Debes introducir tu DNI y fecha de nacimiento.");
+            return;
+        }
+
+        // Validation: Minor fields
+        if (legalData.isMinor && (!legalData.tutorName || !legalData.tutorId || !legalData.tutorPhone || !legalData.emergencyContact)) {
+            setErrorMsg("Debes completar todos los campos del tutor legal.");
+            return;
+        }
+
         setIsSubmitting(true);
         setErrorMsg("");
 
         if (usePass) {
-            const { success, error } = await createBooking(selectedClassId, pax, true);
+            const { success, error } = await createBooking(selectedClassId, pax, true, legalData);
             if (success) {
                 setStep(3);
                 setSuccess(true);
@@ -131,7 +165,7 @@ export default function ReservasPage() {
             }
             setIsSubmitting(false);
         } else {
-            const { success, url, error } = await createCheckoutSession(selectedClassId, pax);
+            const { success, url, error } = await createCheckoutSession(selectedClassId, pax, legalData);
 
             if (success && url) {
                 window.location.href = url; // Redirect to Stripe Checkout
@@ -498,6 +532,15 @@ export default function ReservasPage() {
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Legal Confirmation */}
+                            <LegalCheckbox 
+                                isAccepted={acceptedLegal}
+                                onToggle={setAcceptedLegal}
+                                birthdate={userProfile?.birthdate || undefined}
+                                dni={userProfile?.dni || undefined}
+                                onLegalDataChange={setLegalData}
+                            />
                         </>
                     )}
 

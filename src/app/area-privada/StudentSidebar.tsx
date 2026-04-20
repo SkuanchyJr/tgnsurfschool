@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, CalendarDays, Waves, LogOut, TrendingUp, UserCircle, CreditCard, Bell } from "lucide-react";
+import { LayoutDashboard, CalendarDays, Waves, LogOut, TrendingUp, UserCircle, CreditCard, Bell, ClipboardList } from "lucide-react";
 import { signOut } from "@/app/auth/actions";
 import NotificationBell from "@/components/notifications/NotificationBell";
 
 const navItems = [
-    { name: "Dashboard", href: "/area-privada", icon: LayoutDashboard, exact: true },
-    { name: "Mis Bonos", href: "/area-privada/bonos", icon: CreditCard },
-    { name: "Mi Progreso", href: "/area-privada/progreso", icon: TrendingUp },
-    { name: "Mi Perfil", href: "/area-privada/perfil", icon: UserCircle },
-    { name: "Mis Reservas", href: "/area-privada/mis-reservas", icon: CalendarDays },
-    { name: "Reservar Clase", href: "/area-privada/clases", icon: Waves },
-    { name: "Notificaciones", href: "/area-privada/notificaciones", icon: Bell },
+    { name: "Dashboard",         href: "/area-privada",                    icon: LayoutDashboard, exact: true },
+    { name: "Mis Bonos",         href: "/area-privada/bonos",               icon: CreditCard },
+    { name: "Mi Progreso",       href: "/area-privada/progreso",            icon: TrendingUp },
+    { name: "Mi Perfil",         href: "/area-privada/perfil",              icon: UserCircle },
+    { name: "Mis Reservas",      href: "/area-privada/mis-reservas",        icon: CalendarDays },
+    { name: "Reservar Clase",    href: "/area-privada/clases",              icon: Waves },
+    { name: "Formulario Previo", href: "/area-privada/formulario-previo",   icon: ClipboardList, badge: "Nuevo" },
+    { name: "Notificaciones",    href: "/area-privada/notificaciones",      icon: Bell },
 ];
 
 export default function StudentSidebar() {
@@ -45,7 +46,7 @@ export default function StudentSidebar() {
 
             {/* Nav */}
             <nav className="flex-1 p-3 space-y-0.5">
-                {navItems.map(item => {
+                {navItems.map((item: any) => {
                     const active = isActive(item.href, item.exact);
                     return (
                         <Link
@@ -57,7 +58,12 @@ export default function StudentSidebar() {
                                 }`}
                         >
                             <item.icon size={17} className={active ? "text-white" : "text-white/50"} />
-                            {item.name}
+                            <span className="flex-1">{item.name}</span>
+                            {item.badge && !active && (
+                                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 bg-amber-400 text-white rounded-full">
+                                    {item.badge}
+                                </span>
+                            )}
                         </Link>
                     );
                 })}

@@ -29,7 +29,7 @@ export default function ClasesPage() {
                         <div className="order-2 lg:order-1 relative">
                             <div className="aspect-square rounded-[3rem] overflow-hidden shadow-2xl relative">
                                 <img
-                                    src="https://images.unsplash.com/photo-1544551763-8a3fcab89196?q=80&w=1000&auto=format&fit=crop"
+                                    src="/Copia de DSC05347.jpg"
                                     alt="Clases de surf en agua"
                                     className="w-full h-full object-cover"
                                 />
@@ -176,7 +176,7 @@ export default function ClasesPage() {
                         <div className="order-2 relative">
                             <div className="aspect-[4/3] rounded-[3rem] overflow-hidden shadow-2xl relative">
                                 <img
-                                    src="https://images.unsplash.com/photo-1564982752979-3f7bc974d29a?q=80&w=1000&auto=format&fit=crop"
+                                    src="/Copia de DSC00834.jpg"
                                     alt="Surfskate"
                                     className="w-full h-full object-cover"
                                 />

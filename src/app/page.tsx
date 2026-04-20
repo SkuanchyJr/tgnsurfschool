@@ -161,7 +161,7 @@ export default function Home() {
           className="absolute inset-0 bg-cover bg-center bg-no-repeat scale-105"
           style={{
             backgroundImage:
-              "url('https://images.unsplash.com/photo-1502680390469-be75c86b636f?q=80&w=2070&auto=format&fit=crop')",
+              "url('/Copia de DJI_0867.JPG')",
           }}
         />
         {/* Gradient overlay */}
@@ -274,7 +274,7 @@ export default function Home() {
               <div className="relative">
                 <div className="aspect-[4/5] rounded-3xl overflow-hidden shadow-2xl">
                   <img
-                    src="https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=2070&auto=format&fit=crop"
+                    src="/Copia de DSC05277.jpg"
                     alt="Eric Faura — Fundador de TGN Surf School enseñando surf en Tarragona"
                     className="w-full h-full object-cover"
                   />
@@ -417,7 +417,7 @@ export default function Home() {
               {
                 title: "Clases de Surf",
                 icon: Waves,
-                img: "https://images.unsplash.com/photo-1526367790939-055decc93740?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de DSC05347.jpg",
                 desc: "Sesiones de 2 horas: teoría, calentamiento, práctica en arena y surf en el agua. Material completo incluido (tabla, neopreno y leash). Seguros, fotos y vídeos. Horarios flexibles.",
                 price: "Desde 35€",
                 href: "/clases",
@@ -425,7 +425,7 @@ export default function Home() {
               {
                 title: "Surfskate",
                 icon: Mountain,
-                img: "https://images.unsplash.com/photo-1564982752979-3f7bc974d29a?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de DSC00834.jpg",
                 desc: "Sesiones de 1h 15min para trabajar la técnica fuera del agua. Material incluido (surfskate y protecciones). Seguros, fotos y vídeos. En Skatepark Salou y Skatepark Reus.",
                 price: "Bono 5 clases 150€",
                 href: "/clases#surfskate",
@@ -434,14 +434,14 @@ export default function Home() {
                 title: "Escuela de Verano",
                 icon: Sun,
                 desc: "Para niños y jóvenes de 5 a 18 años. Surf, skate, paddle surf, yoga, talleres, formación y diploma. Grupos por edad y nivel. ¡Las mañanas más épicas del verano!",
-                img: "https://images.unsplash.com/photo-1540206351-d6465b3ac5c1?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de _DRE4622.jpg",
                 price: "Desde 35€/día",
                 href: "/programas#verano",
               },
               {
                 title: "Extraescolar",
                 icon: Users,
-                img: "https://images.unsplash.com/photo-1596489391099-0785081c7e93?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de _DRE4722.jpg",
                 desc: "Programa continuo para niños y adultos. Prioridad surf si hay olas, surfskate si no las hay. En playas de Tarragona y skateparks de la zona.",
                 price: "Niños 59€/mes · Adultos 90€/mes",
                 href: "/programas",
@@ -449,7 +449,7 @@ export default function Home() {
               {
                 title: "Grupos y Eventos",
                 icon: Users,
-                img: "https://images.unsplash.com/photo-1472745433479-4556f22e32c2?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de TGNSURFSCHOOL_24Enero25-101.jpg",
                 desc: "Programas para grupos grandes, eventos corporativos, actividades escolares y team building. Diseñamos la experiencia a medida.",
                 price: "Consultar",
                 href: "/contacto",
@@ -457,7 +457,7 @@ export default function Home() {
               {
                 title: "Alquiler de Material",
                 icon: Anchor,
-                img: "https://images.unsplash.com/photo-1531722569936-825d3dd91b15?q=80&w=600&auto=format&fit=crop",
+                img: "/Copia de DSC05234.jpg",
                 desc: "Tablas de surf, neoprenos y todo el material que necesitas para tu sesión libre. Consulta disponibilidad y tarifas.",
                 price: "Consultar",
                 href: "/alquiler",
@@ -567,7 +567,7 @@ export default function Home() {
               <div className="relative">
                 <div className="aspect-square rounded-3xl overflow-hidden shadow-2xl">
                   <img
-                    src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=2073&auto=format&fit=crop"
+                    src="/Copia de DJI_0880.JPG"
                     alt="Playas de Tarragona — spots de surf de TGN Surf School"
                     className="w-full h-full object-cover"
                   />
@@ -743,7 +743,7 @@ export default function Home() {
             <FadeIn direction="right" delay={0.2}>
               <div className="aspect-[4/5] rounded-3xl overflow-hidden shadow-2xl">
                 <img
-                  src="https://images.unsplash.com/photo-1596489391099-0785081c7e93?q=80&w=1000&auto=format&fit=crop"
+                  src="/Copia de _DRE4722.jpg"
                   alt="Actividad extraescolar TGN Surf School — surf y surfskate para niños y adultos"
                   className="w-full h-full object-cover"
                 />
@@ -838,7 +838,7 @@ export default function Home() {
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{
             backgroundImage:
-              "url('https://images.unsplash.com/photo-1509914398892-963f53e6e2f1?q=80&w=2070&auto=format&fit=crop')",
+              "url('/Copia de tgnsurf_gavina_-48.jpg')",
           }}
         />
         <div className="absolute inset-0 bg-ocean-900/80 backdrop-blur-sm" />
@@ -885,12 +885,12 @@ export default function Home() {
           {/* Mosaic Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             {[
-              { src: "https://images.unsplash.com/photo-1502680390469-be75c86b636f?q=80&w=800&auto=format&fit=crop", span: "md:col-span-2 md:row-span-2", alt: "Surfeando una ola en Tarragona" },
-              { src: "https://images.unsplash.com/photo-1455729552457-5c322b281c77?q=80&w=600&auto=format&fit=crop", span: "", alt: "Clase de surf en la playa" },
-              { src: "https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=600&auto=format&fit=crop", span: "", alt: "Monitor de surf enseñando" },
-              { src: "https://images.unsplash.com/photo-1526367790939-055decc93740?q=80&w=600&auto=format&fit=crop", span: "", alt: "Surf en el Mediterráneo" },
-              { src: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=600&auto=format&fit=crop", span: "", alt: "Playa de Tarragona al atardecer" },
-              { src: "https://images.unsplash.com/photo-1564982752979-3f7bc974d29a?q=80&w=600&auto=format&fit=crop", span: "md:col-span-2", alt: "Surfskate en skatepark" },
+              { src: "/Copia de DSC03385.jpg", span: "md:col-span-2 md:row-span-2", alt: "Surfeando una ola en Tarragona" },
+              { src: "/Copia de tgnsurf_gavina_-28.jpg", span: "", alt: "Clase de surf en la playa" },
+              { src: "/Copia de DSC03485.jpg", span: "", alt: "Monitor de surf enseñando" },
+              { src: "/Copia de _DRE4722.jpg", span: "", alt: "Surf en el Mediterráneo" },
+              { src: "/Copia de tgnsurf_gavina_-51.jpg", span: "", alt: "Playa de Tarragona al atardecer" },
+              { src: "/Copia de DSC05236.jpg", span: "md:col-span-2", alt: "Surfskate en skatepark" },
             ].map(({ src, span, alt }, i) => (
               <FadeIn key={i} delay={i * 0.08} className={span}>
                 <div className="relative rounded-2xl overflow-hidden group aspect-square h-full">
@@ -961,7 +961,7 @@ export default function Home() {
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{
             backgroundImage:
-              "url('https://images.unsplash.com/photo-1416163781035-96a85f76ffc0?q=80&w=2070&auto=format&fit=crop')",
+              "url('/Copia de DJI_0867.JPG')",
           }}
         />
         <div className="absolute inset-0 gradient-hero" />
